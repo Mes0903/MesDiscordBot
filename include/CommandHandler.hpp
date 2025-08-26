@@ -138,6 +138,7 @@ private:
 	void handle_list_users(const dpp::slashcommand_t &event);
 	void handle_create_teams(const dpp::slashcommand_t &event);
 	void handle_match_history(const dpp::slashcommand_t &event);
+	void handle_help(const dpp::slashcommand_t &event);
 
 	// Component interaction handlers - using correct DPP event type
 	void handle_user_selection_interaction(const dpp::button_click_t &event);

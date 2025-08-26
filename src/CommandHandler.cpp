@@ -27,6 +27,9 @@ void CommandHandler::handle_command(const dpp::slashcommand_t &event)
 	else if (command_name == "history") {
 		handle_match_history(event);
 	}
+	else if (command_name == "help") {
+		handle_help(event);
+	}
 }
 
 void CommandHandler::handle_add_user(const dpp::slashcommand_t &event)
@@ -211,6 +214,52 @@ void CommandHandler::handle_match_history(const dpp::slashcommand_t &event)
 
 		embed.add_field("Match #" + std::to_string(recent_matches.size() - i), match_info, false);
 	}
+
+	event.reply(dpp::message().add_embed(embed));
+}
+
+void CommandHandler::handle_help(const dpp::slashcommand_t &event)
+{
+	dpp::embed embed = dpp::embed().set_title("🤖 何一萬 AOE 小幫手：指令說明").set_description("AOE2 Discord 分組機器人 - 讓何一萬來幫你平衡的分配隊伍");
+
+	// 使用者管理指令
+	embed.add_field("👥 **使用者管理**",
+									"• `/adduser <使用者> <戰力>`：新增使用者到系統\n"
+									"• `/removeuser <使用者>`：從系統中移除使用者\n"
+									"• `/updatepower <使用者> <新戰力>`：更新使用者的戰力值\n"
+									"• `/listusers`：列出所有註冊的使用者",
+									false);
+
+	// 分組功能
+	embed.add_field("⚔️ **分組功能**",
+									"• `/createteams <隊伍數量>`：開始互動式分組\n"
+									"  └ 使用按鈕選擇參與者，系統會自動平衡戰力\n"
+									"  └ 支援 2-10 組隊伍，最多顯示 25 位成員",
+									false);
+
+	// 歷史紀錄
+	embed.add_field("📊 **歷史紀錄**",
+									"• `/history [數量]`：查看最近的比賽記錄\n"
+									"  └ 預設顯示 5 場，最多可顯示 20 場",
+									false);
+
+	// 分組流程說明
+	embed.add_field("🎮 **分組流程**",
+									"1️⃣ 使用 `/createteams` 開始分組\n"
+									"2️⃣ 點擊按鈕選擇參與的成員\n"
+									"3️⃣ 點擊「開始分組」執行分配\n"
+									"4️⃣ 查看結果，可重新選擇並「重新分組」",
+									false);
+
+	// 按鈕說明
+	embed.add_field("🔘 **按鈕說明**",
+									"• ⬜ 灰色按鈕：未選擇\n"
+									"• ✅ 綠色按鈕：已選擇\n"
+									"• ⚔️ 開始分組 / 🔄 重新分組\n"
+									"• ✅ 全選 • ❌ 清除選擇",
+									false);
+
+	embed.set_footer(dpp::embed_footer().set_text("💡 提示：戰力值建議範圍 0-9999，可依據玩家實力設定"));
 
 	event.reply(dpp::message().add_embed(embed));
 }
@@ -718,7 +767,9 @@ dpp::message CommandHandler::create_teams_result_message(const std::vector<Team>
 
 std::vector<dpp::slashcommand> CommandHandler::create_commands(dpp::snowflake bot_id)
 {
-	return {dpp::slashcommand("adduser", "新增一個使用者，要給他一個戰力分數", bot_id)
+	return {dpp::slashcommand("help", "顯示所有可用指令的說明", bot_id),
+
+					dpp::slashcommand("adduser", "新增一個使用者，要給他一個戰力分數", bot_id)
 							.add_option(dpp::command_option(dpp::co_user, "user", "要新增的使用者", true))
 							.add_option(dpp::command_option(dpp::co_integer, "combat_power", "使用者的戰力 (0-9999)", true).set_min_value(0).set_max_value(9999)),
 
