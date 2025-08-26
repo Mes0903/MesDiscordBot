@@ -1,6 +1,7 @@
 #include "CommandHandler.hpp"
 
 #include <algorithm>
+#include <sstream>
 
 CommandHandler::CommandHandler(TeamManager &manager) : team_manager(manager) {}
 
@@ -34,7 +35,6 @@ void CommandHandler::handle_add_user(const dpp::slashcommand_t &event)
 	auto power_option = event.get_parameter("combat_power");
 
 	if (std::holds_alternative<dpp::snowflake>(user_option) && std::holds_alternative<int64_t>(power_option)) {
-
 		dpp::snowflake user_id = std::get<dpp::snowflake>(user_option);
 		int combat_power = static_cast<int>(std::get<int64_t>(power_option));
 
@@ -43,9 +43,13 @@ void CommandHandler::handle_add_user(const dpp::slashcommand_t &event)
 			return;
 		}
 
-		// For now, we'll use a placeholder username and update it later
-		// In a future version, we can implement proper username fetching
+		// Try to get the actual username from the interaction
 		std::string username = "User_" + std::to_string(static_cast<uint64_t>(user_id));
+
+		// Check if we can get the username from the resolved users
+		if (event.command.resolved.users.find(user_id) != event.command.resolved.users.end()) {
+			username = event.command.resolved.users.at(user_id).username;
+		}
 
 		team_manager.add_user(user_id, username, combat_power);
 
@@ -89,7 +93,6 @@ void CommandHandler::handle_update_power(const dpp::slashcommand_t &event)
 	auto power_option = event.get_parameter("new_power");
 
 	if (std::holds_alternative<dpp::snowflake>(user_option) && std::holds_alternative<int64_t>(power_option)) {
-
 		dpp::snowflake user_id = std::get<dpp::snowflake>(user_option);
 		int new_power = static_cast<int>(std::get<int64_t>(power_option));
 
@@ -131,7 +134,7 @@ void CommandHandler::handle_list_users(const dpp::slashcommand_t &event)
 	int total_power = 0;
 
 	for (const auto &user : users) {
-		user_list += "<@" + std::to_string(user.discord_id) + "> " + " (" + std::to_string(user.combat_power) + " CP)\n";
+		user_list += "<@" + std::to_string(user.discord_id) + "> (" + std::to_string(user.combat_power) + " CP)\n";
 		total_power += user.combat_power;
 	}
 
@@ -154,53 +157,18 @@ void CommandHandler::handle_create_teams(const dpp::slashcommand_t &event)
 			return;
 		}
 
-		// For now, use all registered users. In a future version,
-		// you could add a way to specify participants
 		auto all_users = team_manager.get_all_users();
-		std::vector<dpp::snowflake> participant_ids;
-
-		for (const auto &user : all_users) {
-			participant_ids.push_back(user.discord_id);
-		}
-
-		if (participant_ids.empty()) {
+		if (all_users.empty()) {
 			event.reply("系統中沒有使用者");
 			return;
 		}
 
-		if (static_cast<int>(participant_ids.size()) < num_teams) {
-			event.reply("人數不夠分 " + std::to_string(num_teams) + " 組隊伍，至少需要 " + std::to_string(num_teams) + " 人");
+		if (static_cast<int>(all_users.size()) < num_teams) {
+			event.reply("人數不夠分 " + std::to_string(num_teams) + "組隊伍，至少需要 " + std::to_string(num_teams) + " 人");
 			return;
 		}
 
-		auto teams = team_manager.create_balanced_teams(participant_ids, num_teams);
-
-		if (teams.empty()) {
-			event.reply("生成隊伍失敗");
-			return;
-		}
-
-		dpp::embed embed = dpp::embed().set_color(0x00ff00).set_title("生成了 " + std::to_string(num_teams) + " 組隊伍");
-
-		for (size_t i = 0; i < teams.size(); ++i) {
-			std::string team_info;
-			for (const auto &member : teams[i].members) {
-				team_info += "<@" + std::to_string(static_cast<uint64_t>(member.discord_id)) + ">" + " (" + std::to_string(member.combat_power) + " CP)\n";
-			}
-			team_info += "**總戰力: " + std::to_string(teams[i].total_power) + "**";
-
-			embed.add_field("隊伍 " + std::to_string(i + 1), team_info, true);
-		}
-
-		// Add balance information
-		if (teams.size() >= 2) {
-			auto min_max = std::minmax_element(teams.begin(), teams.end(), [](const Team &a, const Team &b) { return a.total_power < b.total_power; });
-
-			int power_difference = min_max.second->total_power - min_max.first->total_power;
-			embed.add_field("戰力差", std::to_string(power_difference) + "分", false);
-		}
-
-		event.reply(dpp::message().add_embed(embed));
+		create_user_selection_interface(event, num_teams, all_users);
 	}
 	else {
 		event.reply("無效的隊伍數量參數");
@@ -210,11 +178,11 @@ void CommandHandler::handle_create_teams(const dpp::slashcommand_t &event)
 void CommandHandler::handle_match_history(const dpp::slashcommand_t &event)
 {
 	auto count_option = event.get_parameter("count");
-	int count = 5; // default
+	int count = 5;
 
 	if (std::holds_alternative<int64_t>(count_option)) {
 		count = static_cast<int>(std::get<int64_t>(count_option));
-		count = std::max(1, std::min(count, 20)); // limit between 1-20
+		count = std::max(1, std::min(count, 20));
 	}
 
 	auto recent_matches = team_manager.get_recent_matches(count);
@@ -245,6 +213,520 @@ void CommandHandler::handle_match_history(const dpp::slashcommand_t &event)
 	}
 
 	event.reply(dpp::message().add_embed(embed));
+}
+
+void CommandHandler::create_user_selection_interface(const dpp::slashcommand_t &event, int num_teams, const std::vector<User> &users)
+{
+	auto session_id = selection_manager.create_session(num_teams, users);
+
+	dpp::embed embed = dpp::embed()
+												 .set_color(0x0099ff)
+												 .set_title("選擇參加分組的成員")
+												 .set_description("點擊下方按鈕選擇要參加 " + std::to_string(num_teams) + " 組隊伍分配的成員\n點擊已選成員可取消選擇");
+
+	std::string user_list;
+	int total_power = 0;
+
+	for (const auto &user : users) {
+		user_list += "⬜ <@" + std::to_string(user.discord_id) + "> (" + std::to_string(user.combat_power) + " CP)\n";
+		total_power += user.combat_power;
+	}
+
+	embed.add_field("可選成員 (" + std::to_string(users.size()) + "人)", user_list, false);
+	embed.add_field("總戰力", std::to_string(total_power), true);
+	embed.add_field("已選成員", "0人", true);
+	embed.add_field("已選戰力", "0", true);
+
+	dpp::message msg;
+	msg.add_embed(embed);
+
+	constexpr size_t MAX_BUTTONS_PER_ROW = 5;
+	constexpr size_t MAX_ROWS = 5;
+	constexpr size_t MAX_BUTTONS_PER_MESSAGE = MAX_BUTTONS_PER_ROW * MAX_ROWS;
+
+	size_t users_to_show = std::min(users.size(), MAX_BUTTONS_PER_MESSAGE);
+
+	for (size_t row = 0; row < MAX_ROWS && row * MAX_BUTTONS_PER_ROW < users_to_show; ++row) {
+		dpp::component button_row;
+		button_row.set_type(dpp::cot_action_row);
+
+		for (size_t col = 0; col < MAX_BUTTONS_PER_ROW; ++col) {
+			size_t user_idx = row * MAX_BUTTONS_PER_ROW + col;
+			if (user_idx >= users_to_show)
+				break;
+
+			const auto &user = users[user_idx];
+
+			button_row.add_component(dpp::component()
+																	 .set_type(dpp::cot_button)
+																	 .set_id("toggle_user_" + session_id + "_" + std::to_string(static_cast<uint64_t>(user.discord_id)))
+																	 .set_label(user.username + " (" + std::to_string(user.combat_power) + ")")
+																	 .set_style(dpp::cos_secondary)
+																	 .set_emoji("⬜"));
+		}
+
+		msg.add_component(button_row);
+	}
+
+	if (users.size() > MAX_BUTTONS_PER_MESSAGE) {
+		embed.set_footer(
+				dpp::embed_footer().set_text("注意：只顯示前 " + std::to_string(MAX_BUTTONS_PER_MESSAGE) + " 位成員，共 " + std::to_string(users.size()) + " 位成員"));
+	}
+
+	dpp::component control_row;
+	control_row.set_type(dpp::cot_action_row);
+
+	control_row.add_component(
+			dpp::component().set_type(dpp::cot_button).set_id("create_teams_" + session_id).set_label("開始分組").set_style(dpp::cos_primary).set_emoji("⚔️"));
+
+	control_row.add_component(
+			dpp::component().set_type(dpp::cot_button).set_id("select_all_users_" + session_id).set_label("全選").set_style(dpp::cos_success).set_emoji("✅"));
+
+	control_row.add_component(
+			dpp::component().set_type(dpp::cot_button).set_id("clear_selection_" + session_id).set_label("清除選擇").set_style(dpp::cos_danger).set_emoji("❌"));
+
+	msg.add_component(control_row);
+	event.reply(msg);
+}
+
+void CommandHandler::handle_button_click(const dpp::button_click_t &event)
+{
+	const std::string &custom_id = event.custom_id;
+
+	if (custom_id.starts_with("create_teams_")) {
+		auto session_id_opt = extract_session_id(custom_id, "create_teams_");
+		if (session_id_opt) {
+			handle_create_teams_button_interaction(event, *session_id_opt);
+		}
+	}
+	else if (custom_id.starts_with("select_all_users_")) {
+		auto session_id_opt = extract_session_id(custom_id, "select_all_users_");
+		if (session_id_opt) {
+			handle_select_all_interaction(event, *session_id_opt);
+		}
+	}
+	else if (custom_id.starts_with("clear_selection_")) {
+		auto session_id_opt = extract_session_id(custom_id, "clear_selection_");
+		if (session_id_opt) {
+			handle_clear_selection_interaction(event, *session_id_opt);
+		}
+	}
+	else if (custom_id.starts_with("toggle_user_")) {
+		handle_toggle_user_interaction(event);
+	}
+}
+
+void CommandHandler::handle_select_click(const dpp::select_click_t &event)
+{
+	const std::string &custom_id = event.custom_id;
+
+	if (custom_id.starts_with("user_select_")) {
+		size_t first_underscore = custom_id.find('_', 12);
+		size_t second_underscore = custom_id.find('_', first_underscore + 1);
+
+		if (first_underscore != std::string::npos && second_underscore != std::string::npos) {
+			std::string session_id = custom_id.substr(first_underscore + 1, second_underscore - first_underscore - 1);
+
+			auto *session = selection_manager.get_session(session_id);
+			if (session) {
+				session->update_selection(event.values);
+				event.reply(dpp::ir_update_message, create_selection_message(*session));
+			}
+		}
+	}
+}
+
+void CommandHandler::handle_user_selection_interaction(const dpp::button_click_t &event)
+{
+	event.reply(dpp::ir_channel_message_with_source, dpp::message("此功能已更新，請使用新的選擇界面").set_flags(dpp::m_ephemeral));
+}
+
+void CommandHandler::handle_user_selection_interaction(const dpp::select_click_t &event)
+{
+	event.reply(dpp::ir_channel_message_with_source, dpp::message("此功能已更新，請使用新的選擇界面").set_flags(dpp::m_ephemeral));
+}
+
+void CommandHandler::handle_toggle_user_interaction(const dpp::button_click_t &event)
+{
+	const std::string &custom_id = event.custom_id;
+
+	// Debug: 輸出完整的 custom_id 來檢查格式
+	std::cout << "Toggle user button clicked, custom_id: " << custom_id << std::endl;
+
+	// Parse: "toggle_user_" + session_id + "_" + user_id
+	// 找到 "toggle_user_" 後面的第一個下劃線位置
+	size_t prefix_len = std::string("toggle_user_").length();
+	size_t first_underscore = custom_id.find('_', prefix_len);
+
+	if (first_underscore == std::string::npos) {
+		std::cout << "Error: Could not find session delimiter in custom_id" << std::endl;
+		event.reply(dpp::ir_channel_message_with_source, dpp::message("無效的按鈕ID - 找不到會話分隔符").set_flags(dpp::m_ephemeral));
+		return;
+	}
+
+	// 提取 session_id (在 "toggle_user_" 和第一個 "_" 之間)
+	std::string session_id = custom_id.substr(prefix_len, first_underscore - prefix_len);
+	// 提取 user_id (第一個 "_" 之後的所有內容)
+	std::string user_id_str = custom_id.substr(first_underscore + 1);
+
+	std::cout << "Parsed session_id: '" << session_id << "', user_id: '" << user_id_str << "'" << std::endl;
+
+	if (session_id.empty() || user_id_str.empty()) {
+		std::cout << "Error: Empty session_id or user_id" << std::endl;
+		event.reply(dpp::ir_channel_message_with_source, dpp::message("無效的按鈕ID - 會話ID或用戶ID為空").set_flags(dpp::m_ephemeral));
+		return;
+	}
+
+	auto *session = selection_manager.get_session(session_id);
+	if (!session) {
+		std::cout << "Error: Session not found for id: " << session_id << std::endl;
+		event.reply(dpp::ir_channel_message_with_source, dpp::message("會話已過期，請重新開始分組").set_flags(dpp::m_ephemeral));
+		return;
+	}
+
+	try {
+		uint64_t user_id = std::stoull(user_id_str);
+		std::cout << "Successfully parsed user_id: " << user_id << std::endl;
+		session->toggle_user_selection(user_id);
+		event.reply(dpp::ir_update_message, create_button_selection_message(*session));
+	} catch (const std::exception &e) {
+		std::cout << "Error parsing user_id: " << e.what() << std::endl;
+		event.reply(dpp::ir_channel_message_with_source, dpp::message("無效的用戶ID: " + user_id_str).set_flags(dpp::m_ephemeral));
+	}
+}
+
+void CommandHandler::handle_create_teams_button_interaction(const dpp::button_click_t &event, const std::string &session_id)
+{
+	auto *session = selection_manager.get_session(session_id);
+	if (!session) {
+		event.reply(dpp::ir_channel_message_with_source, dpp::message("會話已過期，請重新開始分組").set_flags(dpp::m_ephemeral));
+		return;
+	}
+
+	auto selected_users = session->get_selected_users();
+	if (selected_users.empty()) {
+		event.reply(dpp::ir_channel_message_with_source, dpp::message("請至少選擇一位成員！").set_flags(dpp::m_ephemeral));
+		return;
+	}
+
+	int num_teams = session->get_num_teams();
+	if (static_cast<int>(selected_users.size()) < num_teams) {
+		event.reply(dpp::ir_channel_message_with_source,
+								dpp::message("選擇的人數不足以分 " + std::to_string(num_teams) + " 組隊伍，至少需要 " + std::to_string(num_teams) + " 人，目前只選了 " +
+														 std::to_string(selected_users.size()) + " 人")
+										.set_flags(dpp::m_ephemeral));
+		return;
+	}
+
+	std::vector<dpp::snowflake> selected_user_ids;
+	for (const auto &user : selected_users) {
+		selected_user_ids.push_back(user.discord_id);
+	}
+
+	auto teams = team_manager.create_balanced_teams(selected_user_ids, num_teams);
+
+	if (teams.empty()) {
+		event.reply(dpp::ir_channel_message_with_source, dpp::message("生成隊伍失敗").set_flags(dpp::m_ephemeral));
+		return;
+	}
+
+	// Create result message with teams and keep the selection interface
+	dpp::message result_msg = create_teams_result_with_selection(*session, teams);
+
+	event.reply(dpp::ir_update_message, result_msg);
+	// Don't remove the session - keep it for potential re-selection
+}
+
+void CommandHandler::handle_select_all_interaction(const dpp::button_click_t &event, const std::string &session_id)
+{
+	auto *session = selection_manager.get_session(session_id);
+	if (!session) {
+		event.reply(dpp::ir_channel_message_with_source, dpp::message("會話已過期，請重新開始分組").set_flags(dpp::m_ephemeral));
+		return;
+	}
+
+	session->select_all();
+	event.reply(dpp::ir_update_message, create_button_selection_message(*session));
+}
+
+void CommandHandler::handle_clear_selection_interaction(const dpp::button_click_t &event, const std::string &session_id)
+{
+	auto *session = selection_manager.get_session(session_id);
+	if (!session) {
+		event.reply(dpp::ir_channel_message_with_source, dpp::message("會話已過期，請重新開始分組").set_flags(dpp::m_ephemeral));
+		return;
+	}
+
+	session->clear_selection();
+	event.reply(dpp::ir_update_message, create_button_selection_message(*session));
+}
+
+std::optional<std::string> CommandHandler::extract_session_id(const std::string &custom_id, const std::string &prefix)
+{
+	if (!custom_id.starts_with(prefix)) {
+		return std::nullopt;
+	}
+	return custom_id.substr(prefix.length());
+}
+
+dpp::message CommandHandler::create_selection_message(const UserSelectionSession &session)
+{
+	const auto &users = session.get_available_users();
+	const auto &selected_ids = session.get_selected_user_ids();
+
+	dpp::embed embed = dpp::embed()
+												 .set_color(0x0099ff)
+												 .set_title("選擇參加分組的成員")
+												 .set_description("請選擇要參加 " + std::to_string(session.get_num_teams()) + " 組隊伍分配的成員，然後點擊「開始分組」按鈕");
+
+	std::string user_list;
+	int total_power = 0;
+	int selected_power = 0;
+	int selected_count = 0;
+
+	for (const auto &user : users) {
+		bool is_selected = selected_ids.contains(static_cast<uint64_t>(user.discord_id));
+		std::string status_icon = is_selected ? "✅ " : "⬜ ";
+		user_list += status_icon + "<@" + std::to_string(user.discord_id) + "> (" + std::to_string(user.combat_power) + " CP)\n";
+		total_power += user.combat_power;
+		if (is_selected) {
+			selected_power += user.combat_power;
+			selected_count++;
+		}
+	}
+
+	embed.add_field("可選成員 (" + std::to_string(users.size()) + "人)", user_list, false);
+	embed.add_field("已選成員", std::to_string(selected_count) + "人", true);
+	embed.add_field("已選戰力", std::to_string(selected_power), true);
+
+	dpp::message msg;
+	msg.add_embed(embed);
+	return msg;
+}
+
+dpp::message CommandHandler::create_button_selection_message(const UserSelectionSession &session)
+{
+	const auto &users = session.get_available_users();
+	const auto &selected_ids = session.get_selected_user_ids();
+
+	dpp::embed embed = dpp::embed()
+												 .set_color(0x0099ff)
+												 .set_title("選擇參加分組的成員")
+												 .set_description("點擊下方按鈕選擇要參加 " + std::to_string(session.get_num_teams()) + " 組隊伍分配的成員\n點擊已選成員可取消選擇");
+
+	std::string user_list;
+	int total_power = 0;
+	int selected_power = 0;
+	int selected_count = 0;
+
+	for (const auto &user : users) {
+		bool is_selected = selected_ids.contains(static_cast<uint64_t>(user.discord_id));
+		std::string status_icon = is_selected ? "✅ " : "⬜ ";
+		user_list += status_icon + "<@" + std::to_string(user.discord_id) + "> (" + std::to_string(user.combat_power) + " CP)\n";
+		total_power += user.combat_power;
+		if (is_selected) {
+			selected_power += user.combat_power;
+			selected_count++;
+		}
+	}
+
+	embed.add_field("可選成員 (" + std::to_string(users.size()) + "人)", user_list, false);
+	embed.add_field("已選成員", std::to_string(selected_count) + "人", true);
+	embed.add_field("已選戰力", std::to_string(selected_power), true);
+	embed.add_field("總戰力", std::to_string(total_power), true);
+
+	dpp::message msg;
+	msg.add_embed(embed);
+
+	constexpr size_t MAX_BUTTONS_PER_ROW = 5;
+	constexpr size_t MAX_ROWS = 5;
+	constexpr size_t MAX_BUTTONS_PER_MESSAGE = MAX_BUTTONS_PER_ROW * MAX_ROWS;
+
+	size_t users_to_show = std::min(users.size(), MAX_BUTTONS_PER_MESSAGE);
+
+	for (size_t row = 0; row < MAX_ROWS && row * MAX_BUTTONS_PER_ROW < users_to_show; ++row) {
+		dpp::component button_row;
+		button_row.set_type(dpp::cot_action_row);
+
+		for (size_t col = 0; col < MAX_BUTTONS_PER_ROW; ++col) {
+			size_t user_idx = row * MAX_BUTTONS_PER_ROW + col;
+			if (user_idx >= users_to_show)
+				break;
+
+			const auto &user = users[user_idx];
+			bool is_selected = selected_ids.contains(static_cast<uint64_t>(user.discord_id));
+
+			button_row.add_component(dpp::component()
+																	 .set_type(dpp::cot_button)
+																	 .set_id("toggle_user_" + session.get_session_id() + "_" + std::to_string(static_cast<uint64_t>(user.discord_id)))
+																	 .set_label(user.username + " (" + std::to_string(user.combat_power) + ")")
+																	 .set_style(is_selected ? dpp::cos_success : dpp::cos_secondary)
+																	 .set_emoji(is_selected ? "✅" : "⬜"));
+		}
+
+		msg.add_component(button_row);
+	}
+
+	if (users.size() > MAX_BUTTONS_PER_MESSAGE) {
+		embed.set_footer(
+				dpp::embed_footer().set_text("注意：只顯示前 " + std::to_string(MAX_BUTTONS_PER_MESSAGE) + " 位成員，共 " + std::to_string(users.size()) + " 位成員"));
+	}
+
+	dpp::component control_row;
+	control_row.set_type(dpp::cot_action_row);
+
+	control_row.add_component(dpp::component()
+																.set_type(dpp::cot_button)
+																.set_id("create_teams_" + session.get_session_id())
+																.set_label("開始分組")
+																.set_style(dpp::cos_primary)
+																.set_emoji("⚔️"));
+
+	control_row.add_component(dpp::component()
+																.set_type(dpp::cot_button)
+																.set_id("select_all_users_" + session.get_session_id())
+																.set_label("全選")
+																.set_style(dpp::cos_success)
+																.set_emoji("✅"));
+
+	control_row.add_component(dpp::component()
+																.set_type(dpp::cot_button)
+																.set_id("clear_selection_" + session.get_session_id())
+																.set_label("清除選擇")
+																.set_style(dpp::cos_danger)
+																.set_emoji("❌"));
+
+	msg.add_component(control_row);
+	return msg;
+}
+
+dpp::message CommandHandler::create_teams_result_with_selection(const UserSelectionSession &session, const std::vector<Team> &teams)
+{
+	const auto &users = session.get_available_users();
+	const auto &selected_ids = session.get_selected_user_ids();
+
+	// Create embed showing both team results and selection status
+	dpp::embed embed = dpp::embed().set_color(0x00ff00).set_title("🏆 分組結果 - " + std::to_string(teams.size()) + " 組隊伍");
+
+	// Add team information
+	for (size_t i = 0; i < teams.size(); ++i) {
+		std::string team_info;
+		for (const auto &member : teams[i].members) {
+			team_info += "<@" + std::to_string(static_cast<uint64_t>(member.discord_id)) + "> (" + std::to_string(member.combat_power) + " CP)\n";
+		}
+		team_info += "**總戰力: " + std::to_string(teams[i].total_power) + "**";
+
+		embed.add_field("隊伍 " + std::to_string(i + 1), team_info, true);
+	}
+
+	// Add balance information
+	if (teams.size() >= 2) {
+		auto min_max = std::minmax_element(teams.begin(), teams.end(), [](const Team &a, const Team &b) { return a.total_power < b.total_power; });
+		int power_difference = min_max.second->total_power - min_max.first->total_power;
+		embed.add_field("戰力差", std::to_string(power_difference) + "分", false);
+	}
+
+	// Add selected users information
+	std::string selected_user_list;
+	int selected_power = 0;
+	int selected_count = 0;
+
+	for (const auto &user : users) {
+		bool is_selected = selected_ids.contains(static_cast<uint64_t>(user.discord_id));
+		if (is_selected) {
+			selected_user_list += "✅ <@" + std::to_string(user.discord_id) + "> (" + std::to_string(user.combat_power) + " CP)\n";
+			selected_power += user.combat_power;
+			selected_count++;
+		}
+	}
+
+	embed.add_field("參與分組的成員 (" + std::to_string(selected_count) + "人)", selected_user_list, false);
+
+	dpp::message msg;
+	msg.add_embed(embed);
+
+	// Keep the user selection buttons for potential re-selection
+	constexpr size_t MAX_BUTTONS_PER_ROW = 5;
+	constexpr size_t MAX_ROWS = 5;
+	constexpr size_t MAX_BUTTONS_PER_MESSAGE = MAX_BUTTONS_PER_ROW * MAX_ROWS;
+
+	size_t users_to_show = std::min(users.size(), MAX_BUTTONS_PER_MESSAGE);
+
+	for (size_t row = 0; row < MAX_ROWS && row * MAX_BUTTONS_PER_ROW < users_to_show; ++row) {
+		dpp::component button_row;
+		button_row.set_type(dpp::cot_action_row);
+
+		for (size_t col = 0; col < MAX_BUTTONS_PER_ROW; ++col) {
+			size_t user_idx = row * MAX_BUTTONS_PER_ROW + col;
+			if (user_idx >= users_to_show)
+				break;
+
+			const auto &user = users[user_idx];
+			bool is_selected = selected_ids.contains(static_cast<uint64_t>(user.discord_id));
+
+			button_row.add_component(dpp::component()
+																	 .set_type(dpp::cot_button)
+																	 .set_id("toggle_user_" + session.get_session_id() + "_" + std::to_string(static_cast<uint64_t>(user.discord_id)))
+																	 .set_label(user.username + " (" + std::to_string(user.combat_power) + ")")
+																	 .set_style(is_selected ? dpp::cos_success : dpp::cos_secondary)
+																	 .set_emoji(is_selected ? "✅" : "⬜"));
+		}
+
+		msg.add_component(button_row);
+	}
+
+	// Add control buttons with "重新分組" instead of "開始分組"
+	dpp::component control_row;
+	control_row.set_type(dpp::cot_action_row);
+
+	control_row.add_component(dpp::component()
+																.set_type(dpp::cot_button)
+																.set_id("create_teams_" + session.get_session_id())
+																.set_label("重新分組")
+																.set_style(dpp::cos_primary)
+																.set_emoji("🔄"));
+
+	control_row.add_component(dpp::component()
+																.set_type(dpp::cot_button)
+																.set_id("select_all_users_" + session.get_session_id())
+																.set_label("全選")
+																.set_style(dpp::cos_success)
+																.set_emoji("✅"));
+
+	control_row.add_component(dpp::component()
+																.set_type(dpp::cot_button)
+																.set_id("clear_selection_" + session.get_session_id())
+																.set_label("清除選擇")
+																.set_style(dpp::cos_danger)
+																.set_emoji("❌"));
+
+	msg.add_component(control_row);
+	return msg;
+}
+
+dpp::message CommandHandler::create_teams_result_message(const std::vector<Team> &teams)
+{
+	dpp::embed embed = dpp::embed().set_color(0x00ff00).set_title("生成了 " + std::to_string(teams.size()) + " 組隊伍");
+
+	for (size_t i = 0; i < teams.size(); ++i) {
+		std::string team_info;
+		for (const auto &member : teams[i].members) {
+			team_info += "<@" + std::to_string(static_cast<uint64_t>(member.discord_id)) + "> (" + std::to_string(member.combat_power) + " CP)\n";
+		}
+		team_info += "**總戰力: " + std::to_string(teams[i].total_power) + "**";
+
+		embed.add_field("隊伍 " + std::to_string(i + 1), team_info, true);
+	}
+
+	if (teams.size() >= 2) {
+		auto min_max = std::minmax_element(teams.begin(), teams.end(), [](const Team &a, const Team &b) { return a.total_power < b.total_power; });
+		int power_difference = min_max.second->total_power - min_max.first->total_power;
+		embed.add_field("戰力差", std::to_string(power_difference) + "分", false);
+	}
+
+	dpp::message msg;
+	msg.add_embed(embed);
+	return msg;
 }
 
 std::vector<dpp::slashcommand> CommandHandler::create_commands(dpp::snowflake bot_id)

@@ -62,6 +62,26 @@ int main()
 		}
 	});
 
+	// Handle button clicks
+	bot.on_button_click([&command_handler](const dpp::button_click_t &event) {
+		try {
+			command_handler.handle_button_click(event);
+		} catch (const std::exception &e) {
+			std::cerr << "Error handling button click '" << event.custom_id << "': " << e.what() << std::endl;
+			event.reply(dpp::ir_channel_message_with_source, dpp::message("處理按鈕點擊時發生錯誤").set_flags(dpp::m_ephemeral));
+		}
+	});
+
+	// Handle select menu interactions
+	bot.on_select_click([&command_handler](const dpp::select_click_t &event) {
+		try {
+			command_handler.handle_select_click(event);
+		} catch (const std::exception &e) {
+			std::cerr << "Error handling select click '" << event.custom_id << "': " << e.what() << std::endl;
+			event.reply(dpp::ir_channel_message_with_source, dpp::message("處理選單互動時發生錯誤").set_flags(dpp::m_ephemeral));
+		}
+	});
+
 	// Bot ready event - register commands
 	bot.on_ready([&bot](const dpp::ready_t &) {
 		std::cout << "Bot is ready! Logged in as " << bot.me.username << std::endl;
