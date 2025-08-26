@@ -350,47 +350,34 @@ void CommandHandler::handle_toggle_user_interaction(const dpp::button_click_t &e
 {
 	const std::string &custom_id = event.custom_id;
 
-	// Debug: 輸出完整的 custom_id 來檢查格式
-	std::cout << "Toggle user button clicked, custom_id: " << custom_id << std::endl;
-
 	// Parse: "toggle_user_" + session_id + "_" + user_id
-	// 找到 "toggle_user_" 後面的第一個下劃線位置
 	size_t prefix_len = std::string("toggle_user_").length();
 	size_t first_underscore = custom_id.find('_', prefix_len);
 
 	if (first_underscore == std::string::npos) {
-		std::cout << "Error: Could not find session delimiter in custom_id" << std::endl;
 		event.reply(dpp::ir_channel_message_with_source, dpp::message("無效的按鈕ID - 找不到會話分隔符").set_flags(dpp::m_ephemeral));
 		return;
 	}
 
-	// 提取 session_id (在 "toggle_user_" 和第一個 "_" 之間)
 	std::string session_id = custom_id.substr(prefix_len, first_underscore - prefix_len);
-	// 提取 user_id (第一個 "_" 之後的所有內容)
 	std::string user_id_str = custom_id.substr(first_underscore + 1);
 
-	std::cout << "Parsed session_id: '" << session_id << "', user_id: '" << user_id_str << "'" << std::endl;
-
 	if (session_id.empty() || user_id_str.empty()) {
-		std::cout << "Error: Empty session_id or user_id" << std::endl;
 		event.reply(dpp::ir_channel_message_with_source, dpp::message("無效的按鈕ID - 會話ID或用戶ID為空").set_flags(dpp::m_ephemeral));
 		return;
 	}
 
 	auto *session = selection_manager.get_session(session_id);
 	if (!session) {
-		std::cout << "Error: Session not found for id: " << session_id << std::endl;
 		event.reply(dpp::ir_channel_message_with_source, dpp::message("會話已過期，請重新開始分組").set_flags(dpp::m_ephemeral));
 		return;
 	}
 
 	try {
 		uint64_t user_id = std::stoull(user_id_str);
-		std::cout << "Successfully parsed user_id: " << user_id << std::endl;
 		session->toggle_user_selection(user_id);
 		event.reply(dpp::ir_update_message, create_button_selection_message(*session));
 	} catch (const std::exception &e) {
-		std::cout << "Error parsing user_id: " << e.what() << std::endl;
 		event.reply(dpp::ir_channel_message_with_source, dpp::message("無效的用戶ID: " + user_id_str).set_flags(dpp::m_ephemeral));
 	}
 }
