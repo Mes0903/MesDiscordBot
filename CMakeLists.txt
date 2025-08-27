@@ -9,9 +9,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Enable additional compiler warnings for better code quality
-# if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    add_compile_options(-Wall -Wextra -Wpedantic)
-# endif()
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    add_compile_options(-Wall -Wextra -Wpedantic -Wunreachable-code)
+endif()
 
 set(CPM_DOWNLOAD_VERSION 0.39.0)
 set(CPM_SOURCE_CACHE "${CMAKE_BINARY_DIR}/cpm_cache")
