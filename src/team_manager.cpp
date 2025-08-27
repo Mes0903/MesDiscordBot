@@ -1,3 +1,15 @@
+/**
+ * @brief
+ * Responsibilities:
+ * 	 - Persist/load users and matches from JSON files
+ * 	 - Manage user registry (upsert, remove, list, find)
+ * 	 - Form balanced teams using a greedy pass + light randomization swaps
+ * 	 - Record matches, update per-user W/L stats, and provide recent history
+ * Notes:
+ *   - All public functions return std::expected for explicit error handling
+ *   - `form_teams` currently balances by total power; you can enforce equal
+ *     team sizes by comparing (size, power) when choosing the next team.
+ */
 
 #include "team_manager.hpp"
 
@@ -7,6 +19,11 @@
 
 namespace terry::bot {
 
+using json = nlohmann::json;
+
+/**
+ * @brief Load users and matches from disk; returns error if JSON is invalid.
+ */
 std::expected<ok_t, error> team_manager::load()
 {
 	// users
@@ -36,6 +53,9 @@ std::expected<ok_t, error> team_manager::load()
 	return ok_t{};
 }
 
+/**
+ * @brief Save users and matches to disk.
+ */
 std::expected<ok_t, error> team_manager::save() const
 {
 	try {
@@ -59,6 +79,9 @@ std::expected<ok_t, error> team_manager::save() const
 	return ok_t{};
 }
 
+/**
+ * @brief Check if a user exists (by snowflake).
+ */
 bool team_manager::has_user(user_id id) const noexcept { return users_.contains(static_cast<uint64_t>(id)); }
 
 const user *team_manager::find_user(user_id id) const noexcept
@@ -73,6 +96,9 @@ user *team_manager::find_user(user_id id) noexcept
 	return it == users_.end() ? nullptr : &it->second;
 }
 
+/**
+ * @brief Insert or update a user (requires combat_power >= 0).
+ */
 std::expected<ok_t, error> team_manager::upsert_user(user_id id, std::string username, int combat_power)
 {
 	if (combat_power < 0)
@@ -84,6 +110,9 @@ std::expected<ok_t, error> team_manager::upsert_user(user_id id, std::string use
 	return ok_t{};
 }
 
+/**
+ * @brief Remove a user by ID; error if not found.
+ */
 std::expected<ok_t, error> team_manager::remove_user(user_id id)
 {
 	auto it = users_.find(static_cast<uint64_t>(id));
@@ -93,6 +122,9 @@ std::expected<ok_t, error> team_manager::remove_user(user_id id)
 	return ok_t{};
 }
 
+/**
+ * @brief Return a copy of users sorted by power/name.
+ */
 std::vector<user> team_manager::list_users(user_sort sort) const
 {
 	std::vector<user> v;
@@ -113,6 +145,9 @@ std::vector<user> team_manager::list_users(user_sort sort) const
 	return v;
 }
 
+/**
+ * @brief Map a list of IDs to existing users (silently skipping unknown IDs).
+ */
 std::vector<user> team_manager::participants_from_ids(std::span<const user_id> ids) const
 {
 	std::vector<user> res;
@@ -124,6 +159,9 @@ std::vector<user> team_manager::participants_from_ids(std::span<const user_id> i
 	return res;
 }
 
+/**
+ * @brief Form teams: greedy by lowest total power, then random swaps with tolerance.
+ */
 std::vector<team> team_manager::form_teams(std::span<const user_id> participant_ids, int num_teams, std::optional<uint64_t> seed) const
 {
 	if (num_teams <= 0)
@@ -166,6 +204,9 @@ std::vector<team> team_manager::form_teams(std::span<const user_id> participant_
 	return teams;
 }
 
+/**
+ * @brief Record a match, update per-user W/L stats, and append to history.
+ */
 std::expected<ok_t, error> team_manager::record_match(std::vector<team> teams, std::vector<int> winning_teams, timestamp when)
 {
 	// validate winners
@@ -204,6 +245,9 @@ std::expected<ok_t, error> team_manager::record_match(std::vector<team> teams, s
 	return ok_t{};
 }
 
+/**
+ * @brief Return the last `count` matches in reverse chronological order.
+ */
 std::vector<match_record> team_manager::recent_matches(int count) const
 {
 	if (count <= 0)

@@ -1,3 +1,14 @@
+/**
+ * @brief
+ *  Responsibilities:
+ *    - Dispatch slash-commands (help/adduser/removeuser/listusers/formteams/history)
+ *    - Manage interactive panel lifecycle (buttons & select menu)
+ *    - Enforce ownership and session validity for interactions
+ *  Notes:
+ *    - custom_id format: `panel:<panel_id>:<action>[:arg]`
+ *    - Integer parsing uses std::from_chars (no exceptions)
+ */
+
 #pragma once
 
 #include "team_manager.hpp"
@@ -35,24 +46,41 @@ inline void reply_err(const dpp::slashcommand_t &ev, std::string_view s) { ev.re
 inline void reply_err(const dpp::button_click_t &ev, std::string_view s) { ev.reply(dpp::ir_channel_message_with_source, make_err_msg(s)); }
 inline void reply_err(const dpp::select_click_t &ev, std::string_view s) { ev.reply(dpp::ir_channel_message_with_source, make_err_msg(s)); }
 
-struct selection_session {
-	std::string panel_id;
-	dpp::snowflake guild_id{};
-	dpp::snowflake channel_id{};
-	dpp::snowflake owner_id{};
-	int num_teams{};
-	std::vector<user_id> selected;
-	std::vector<team> last_teams;
-	bool active{true};
-};
-
+/**
+ * @class command_handler
+ * @brief Wires DPP events (slash/button/select) to bot behaviors.
+ */
 class command_handler {
 public:
+	/**
+	 * @struct selection_session
+	 * @brief Tracks the state for an interactive assignment panel.
+	 * @note Invalidated once the owner presses "End".
+	 */
+	struct selection_session {
+		std::string panel_id;
+		dpp::snowflake guild_id{};
+		dpp::snowflake channel_id{};
+		dpp::snowflake owner_id{};
+		int num_teams{};
+		std::vector<user_id> selected;
+		std::vector<team> last_teams;
+		bool active{true};
+	};
+
+	/**
+	 * @brief Construct a command handler bound to a dpp::cluster and team_manager.
+	 * @param bot Discord cluster (event source/sink).
+	 * @param tm  Reference to the shared team_manager.
+	 */
 	explicit command_handler(team_manager &tm) : tm_(tm) {}
 
 	// DPP entrypoints
+	/** @brief Handle incoming slash-commands. */
 	void on_slash(const dpp::slashcommand_t &ev);
+	/** @brief Handle button interactions from the panel. */
 	void on_button(const dpp::button_click_t &ev);
+	/** @brief Handle select-menu interactions from the panel. */
 	void on_select(const dpp::select_click_t &ev);
 
 	// slash command registration
@@ -61,9 +89,6 @@ public:
 private:
 	team_manager &tm_;
 	std::unordered_map<std::string, selection_session> sessions_; // key: panel_id
-
-	// Resolve a user's friendly name within the guild
-	[[nodiscard]] std::string display_name(user_id uid, dpp::snowflake guild) const; // unused
 
 	// commands
 	void cmd_help(const dpp::slashcommand_t &ev);
@@ -76,6 +101,8 @@ private:
 	// helpers (ui/panel)
 	static std::string make_token();
 	static bool starts_with(const std::string &s, const std::string &p) { return s.rfind(p, 0) == 0; }
+
+	/** @brief Build the interactive assignment panel message for a given session. */
 	[[nodiscard]] dpp::message build_panel_message(const selection_session &s) const;
 };
 

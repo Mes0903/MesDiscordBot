@@ -1,3 +1,18 @@
+/**
+ * @brief
+ * Responsibilities:
+ *   - Dispatch slash-commands (help/adduser/removeuser/listusers/formteams/history)
+ *   - Handle panel interactions (buttons & select menu)
+ *   - Build the dynamic "team assignment" control panel message
+ *
+ * Design notes:
+ *   - We use custom_id in the shape `panel:<panel_id>:<action>[:arg]`
+ *   - All interactions are restricted to the panel owner
+ *   - Parsing of integers uses std::from_chars (no exceptions, fast) — we check
+ *		`ec == std::errc{}` to indicate success and verify full-string consumption.
+ *   - The panel can be "ended" which removes the components and invalidates the session.
+ */
+
 #include "command_handler.hpp"
 
 #include <algorithm>
@@ -18,6 +33,10 @@ std::string command_handler::make_token()
 	return oss.str();
 }
 
+/**
+ * @brief Handle a slash command by name and dispatch to the right subcommand.
+ * 				Unknown commands are answered with an ephemeral error.
+ */
 void command_handler::on_slash(const dpp::slashcommand_t &ev)
 {
 	auto name = ev.command.get_command_name();
@@ -37,17 +56,26 @@ void command_handler::on_slash(const dpp::slashcommand_t &ev)
 	reply_err(ev, text::unknown_command);
 }
 
+/**
+ * @brief Handle button clicks originating from the assignment panel.
+ * 				Expected custom_id format: panel:<panel_id>:<action>[:arg]
+ * 				Actions:
+ * 				  - assign      → (re)form teams from the current selection
+ * 				  - win:<index> → record winners for the last formed teams
+ * 				  - end         → close the panel (remove components, drop session)
+ */
 void command_handler::on_button(const dpp::button_click_t &ev)
 {
 	const auto &cid = ev.custom_id;
 
-	// Expect panel actions only
+	// Accept only interactions originating from our panel widgets
+	// (custom_id must start with "panel:")
 	if (!starts_with(cid, "panel:")) {
 		reply_err(ev, text::unsupported_button);
 		return;
 	}
 
-	// panel:<id>:<action>[:arg]
+	// custom_id layout: panel:<panel_id>:<action>[:arg]
 	auto rest = cid.substr(6);
 	auto p1 = rest.find(':');
 	if (p1 == std::string::npos)
@@ -119,7 +147,7 @@ void command_handler::on_button(const dpp::button_click_t &ev)
 	if (action == "end") {
 		sess.active = false;
 		auto m = build_panel_message(sess);
-		m.components.clear(); // disable all
+		m.components.clear(); // disable all interactive components (close the panel)
 		m.set_content("🔒 面板已由 <@" + std::to_string((uint64_t)sess.owner_id) + "> 關閉");
 		ev.reply(dpp::ir_update_message, m);
 		sessions_.erase(it);
@@ -129,6 +157,12 @@ void command_handler::on_button(const dpp::button_click_t &ev)
 	reply_err(ev, text::unknown_panel_action);
 }
 
+/**
+ * @brief Handle select-menu changes originating from the assignment panel.
+ * 			  The menu lists registered users; selections populate `sess.selected`.
+ * 			  After updating the selection, any previously generated teams are cleared
+ * 			  until the user presses the "assign" button again.
+ */
 void command_handler::on_select(const dpp::select_click_t &ev)
 {
 	const auto &cid = ev.custom_id;
@@ -138,7 +172,7 @@ void command_handler::on_select(const dpp::select_click_t &ev)
 		return;
 	}
 
-	// panel:<id>:select
+	// custom_id layout for the select menu: panel:<panel_id>:select
 	auto rest = cid.substr(6);
 	auto p1 = rest.find(':');
 	if (p1 == std::string::npos)
@@ -165,7 +199,7 @@ void command_handler::on_select(const dpp::select_click_t &ev)
 		return;
 	}
 
-	// Update selection from values
+	// Update the session's participant selection from the select menu values
 	sess.selected.clear();
 	for (const auto &v : ev.values) {
 		uint64_t id{};
@@ -179,11 +213,14 @@ void command_handler::on_select(const dpp::select_click_t &ev)
 			return;
 		}
 	}
-	// Clear previous teams until re/assign
+	// Clear any previously generated teams until the next "Assign"
 	sess.last_teams.clear();
 	ev.reply(dpp::ir_update_message, build_panel_message(sess));
 }
 
+/**
+ * @brief Declare all guild commands the bot provides. These are registered in on_ready().
+ */
 std::vector<dpp::slashcommand> command_handler::commands(dpp::snowflake bot_id)
 {
 	using sc = dpp::slashcommand;
@@ -204,6 +241,9 @@ std::vector<dpp::slashcommand> command_handler::commands(dpp::snowflake bot_id)
 	return cmds;
 }
 
+/**
+ * @brief Reply with an embedded help panel listing all supported commands and flows.
+ */
 void command_handler::cmd_help(const dpp::slashcommand_t &ev)
 {
 	dpp::embed e;
@@ -231,6 +271,11 @@ void command_handler::cmd_help(const dpp::slashcommand_t &ev)
 	ev.reply(dpp::message().add_embed(e));
 }
 
+/**
+ * @brief Add or update a user's combat power.
+ * 			  We also try to capture a snapshot of the username/global_name for display.
+ * 			  Persist the change to disk via team_manager::save().
+ */
 void command_handler::cmd_adduser(const dpp::slashcommand_t &ev)
 {
 	dpp::snowflake uid = std::get<dpp::snowflake>(ev.get_parameter("user"));
@@ -271,6 +316,9 @@ void command_handler::cmd_adduser(const dpp::slashcommand_t &ev)
 	ev.reply(dpp::message("✅ 新增/更新使用者 <@" + std::to_string((uint64_t)uid) + "> 的戰力為 " + std::to_string(power)));
 }
 
+/**
+ * @brief Remove a user from the registry by Discord snowflake ID, then save to disk.
+ */
 void command_handler::cmd_removeuser(const dpp::slashcommand_t &ev)
 {
 	dpp::snowflake uid = std::get<dpp::snowflake>(ev.get_parameter("user"));
@@ -284,6 +332,10 @@ void command_handler::cmd_removeuser(const dpp::slashcommand_t &ev)
 	}
 }
 
+/**
+ * @brief List all registered users sorted by combat power (descending).
+ * 				Shows a simple win-rate summary when available.
+ */
 void command_handler::cmd_listusers(const dpp::slashcommand_t &ev)
 {
 	dpp::embed e;
@@ -306,6 +358,13 @@ void command_handler::cmd_listusers(const dpp::slashcommand_t &ev)
 	ev.reply(dpp::message().add_embed(e));
 }
 
+/**
+ * @brief Build the dynamic control panel message:
+ *					- An embed showing the current team count, selected users, and last formed teams
+ *					- A select menu (multi-select) to choose participants
+ *					- Buttons: "Assign" (primary), "End" (danger), and winner buttons (after teams exist)
+ *        "Assign" is auto-disabled until we have at least one member per team.
+ */
 dpp::message command_handler::build_panel_message(const selection_session &s) const
 {
 	dpp::message msg;
@@ -316,7 +375,7 @@ dpp::message command_handler::build_panel_message(const selection_session &s) co
 	std::ostringstream body;
 	body << "隊伍數量： **" << s.num_teams << "**\n";
 
-	// Participants (as tags)
+	// Participants (rendered as Discord mentions)
 	if (!s.selected.empty()) {
 		body << "參與者 (" << s.selected.size() << ")： ";
 		for (auto id : s.selected)
@@ -418,6 +477,12 @@ dpp::message command_handler::build_panel_message(const selection_session &s) co
 	return msg;
 }
 
+/**
+ * @brief Start a new selection session ("panel") for the caller:
+ * 					- Generate a unique token as panel_id
+ * 					- Restrict control to the panel owner
+ * 					- Render the initial panel (no teams yet; only selection and action buttons)
+ */
 void command_handler::cmd_formteams(const dpp::slashcommand_t &ev)
 {
 	int n = static_cast<int>(std::get<int64_t>(ev.get_parameter("teams")));
@@ -445,6 +510,10 @@ void command_handler::cmd_formteams(const dpp::slashcommand_t &ev)
 	ev.reply(msg);
 }
 
+/**
+ * @brief Show the N most recent matches from persistent history.
+ *				Each entry renders winners (if recorded), timestamp, and per-team member tags.
+ */
 void command_handler::cmd_history(const dpp::slashcommand_t &ev)
 {
 	int count = 5;

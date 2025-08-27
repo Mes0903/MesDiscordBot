@@ -1,3 +1,13 @@
+/**
+ * @brief
+ * Boot sequence:
+ *   - Read bot token from .bot_token
+ *   - Create dpp::cluster and wire handlers (slash, button, select, ready, log)
+ *   - Load persistent data via team_manager::load()
+ *   - On ready, register (or upsert) guild commands once
+ *   - Start the event loop
+ *   - On exit, save state via team_manager::save()
+ */
 
 #include "command_handler.hpp"
 #include "team_manager.hpp"
