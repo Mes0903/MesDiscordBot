@@ -1,6 +1,7 @@
 #include "command_handler.hpp"
 
 #include <algorithm>
+#include <charconv>
 #include <limits>
 #include <random>
 #include <sstream>
@@ -84,10 +85,17 @@ void command_handler::on_button(const dpp::button_click_t &ev)
 	}
 
 	if (starts_with(action, "win:")) {
-		int idx = -1;
-		try {
-			idx = std::stoi(action.substr(4));
-		} catch (...) {
+		int idx{};
+		{
+			auto s = action.substr(4);
+			auto sv = std::string_view{s};
+			int val{};
+			auto [ptr, ec] = std::from_chars(sv.data(), sv.data() + sv.size(), val, 10);
+			if (ec != std::errc{} || ptr != sv.data() + sv.size()) {
+				reply_err(ev, text::invalid_team_index);
+				return;
+			}
+			idx = val;
 		}
 
 		if (idx < 0 || idx >= (int)sess.last_teams.size()) {
@@ -160,9 +168,15 @@ void command_handler::on_select(const dpp::select_click_t &ev)
 	// Update selection from values
 	sess.selected.clear();
 	for (const auto &v : ev.values) {
-		try {
-			sess.selected.push_back(user_id{std::stoull(v)});
-		} catch (...) {
+		uint64_t id{};
+		auto sv = std::string_view{v};
+		auto [ptr, ec] = std::from_chars(sv.data(), sv.data() + sv.size(), id, 10);
+		if (ec == std::errc{} && ptr == sv.data() + sv.size()) {
+			sess.selected.push_back(user_id{id});
+		}
+		else {
+			reply_err(ev, "選單值格式錯誤");
+			return;
 		}
 	}
 	// Clear previous teams until re/assign
