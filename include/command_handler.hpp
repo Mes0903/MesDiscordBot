@@ -90,6 +90,10 @@ private:
 	team_manager &tm_;
 	std::unordered_map<std::string, selection_session> sessions_; // key: panel_id
 
+	// helpers (ui/panel)
+	static std::string make_token();
+	static bool starts_with(const std::string &s, const std::string &p) { return s.rfind(p, 0) == 0; }
+
 	// commands
 	void cmd_help(const dpp::slashcommand_t &ev);
 	void cmd_adduser(const dpp::slashcommand_t &ev);
@@ -97,13 +101,12 @@ private:
 	void cmd_listusers(const dpp::slashcommand_t &ev);
 	void cmd_formteams(const dpp::slashcommand_t &ev);
 	void cmd_history(const dpp::slashcommand_t &ev);
-
-	// helpers (ui/panel)
-	static std::string make_token();
-	static bool starts_with(const std::string &s, const std::string &p) { return s.rfind(p, 0) == 0; }
+	void cmd_setk(const dpp::slashcommand_t &ev);
+	void cmd_getk(const dpp::slashcommand_t &ev);
 
 	/** @brief Build the interactive assignment panel message for a given session. */
 	[[nodiscard]] dpp::message build_panel_message(const selection_session &s) const;
+	void refresh_session_snapshot(selection_session &s) const;
 };
 
 } // namespace terry::bot

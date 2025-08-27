@@ -32,7 +32,7 @@ user user::from_json(const json &j)
 	user u;
 	u.id = user_id(j.at("discord_id").get<uint64_t>());
 	u.username = j.at("username").get<std::string>();
-	u.combat_power = j.at("combat_power").get<int>();
+	u.combat_power = j.at("combat_power").get<double>();
 	u.wins = j.value("wins", 0);
 	u.games = j.value("games", 0);
 	return u;
@@ -43,7 +43,7 @@ user user::from_json(const json &j)
  */
 void team::recalc_total_power()
 {
-	total_power = 0;
+	total_power = 0.0;
 	for (const auto &m : members)
 		total_power += m.combat_power;
 }

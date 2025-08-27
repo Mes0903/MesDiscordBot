@@ -1,5 +1,5 @@
 /**
- * @brief 
+ * @brief
  *  Contains lightweight structs and helpers:
  *    - user          : registered player with combat power and W/L stats
  *    - team          : collection of users with cached total power
@@ -22,9 +22,9 @@ struct user {
 
 	user_id id{};
 	std::string username;
-	int combat_power{}; // >= 0
-	int wins{0};				// persisted in users.json
-	int games{0};				// persisted in users.json
+	double combat_power{}; // >= 0
+	int wins{};						 // persisted in users.json
+	int games{};					 // persisted in users.json
 
 	[[nodiscard]] json to_json() const;
 	[[nodiscard]] static user from_json(const json &);
@@ -32,7 +32,7 @@ struct user {
 
 struct team {
 	std::vector<user> members;
-	int total_power{};
+	double total_power{};
 
 	void add_member(const user &u)
 	{

@@ -15,12 +15,12 @@
 
 #include "models.hpp"
 
+#include <cmath>
 #include <expected>
 #include <optional>
 #include <random>
 #include <unordered_map>
 #include <vector>
-
 namespace terry::bot {
 
 enum class user_sort { by_power_desc, by_power_asc, by_name_asc };
@@ -53,8 +53,8 @@ public:
 	[[nodiscard]] bool has_user(user_id id) const noexcept;
 	[[nodiscard]] const user *find_user(user_id id) const noexcept;
 	[[nodiscard]] user *find_user(user_id id) noexcept;
+	[[nodiscard]] std::expected<ok_t, error> upsert_user(user_id id, std::string username, double combat_power);
 
-	[[nodiscard]] std::expected<ok_t, error> upsert_user(user_id id, std::string username, int combat_power);
 	/**
 	 * @brief Remove a user from the registry.
 	 * @param id Discord snowflake ID.
@@ -88,12 +88,26 @@ public:
 	 */
 	[[nodiscard]] std::vector<match_record> recent_matches(int count) const;
 
+	// for hidden score
+	void set_k_factor(double k) noexcept
+	{
+		if (std::isfinite(k) && k > 0.0)
+			k_factor_ = k;
+	}
+	double get_k_factor() const noexcept { return k_factor_; }
+
 private:
 	std::unordered_map<uint64_t, user> users_;
 	std::vector<match_record> history_;
 
 	static constexpr const char *USERS_FILE = "users.json";
 	static constexpr const char *MATCHES_FILE = "matches.json";
+
+	// for hidden score
+	static constexpr const char *CONFIG_FILE = "config.json";
+	double k_factor_{4.0};
+	double delta_cap_scale_{1.0}; // scales the hard cap; cap = delta_cap_scale * k * sqrt(opp_avg)
+	double rating_alpha_{0.5};		// smoothing factor in [0,1], new = old + alpha * delta
 
 	/**
 	 * @brief Map a list of user IDs to known users.

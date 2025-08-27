@@ -17,6 +17,8 @@
 
 #include <algorithm>
 #include <charconv>
+#include <chrono>
+#include <format>
 #include <limits>
 #include <random>
 #include <sstream>
@@ -52,6 +54,10 @@ void command_handler::on_slash(const dpp::slashcommand_t &ev)
 		return cmd_formteams(ev);
 	if (name == "history")
 		return cmd_history(ev);
+	if (name == "setk")
+		return cmd_setk(ev);
+	if (name == "getk")
+		return cmd_getk(ev);
 
 	reply_err(ev, text::unknown_command);
 }
@@ -101,13 +107,30 @@ void command_handler::on_button(const dpp::button_click_t &ev)
 	}
 
 	if (action == "assign") {
-		if ((int)sess.selected.size() < sess.num_teams) {
-			reply_err(ev, text::need_one_per_team);
+		// Server-side feasibility: at least one per team; uneven sizes allowed.
+		const int P = static_cast<int>(sess.selected.size());
+		const int T = sess.num_teams;
+
+		if (P == 0) {
+			reply_err(ev, "Please select participants from the list below first.");
+			return;
+		}
+		if (T > P) {
+			reply_err(ev, "Cannot form teams: team count (" + std::to_string(T) + ") exceeds participant count (" + std::to_string(P) + ").");
 			return;
 		}
 
-		// Re/assign teams using the current selection
-		sess.last_teams = tm_.form_teams(sess.selected, sess.num_teams);
+		//  seed to keep results varied per click.
+		const uint64_t seed = static_cast<uint64_t>(std::chrono::high_resolution_clock::now().time_since_epoch().count());
+
+		// Form teams with uneven sizes allowed (minimize total-power spread).
+		sess.last_teams = tm_.form_teams(sess.selected, T, seed);
+
+		if (sess.last_teams.empty()) {
+			reply_err(ev, "Team assignment failed. Please re-check participants and team count.");
+			return;
+		}
+
 		ev.reply(dpp::ir_update_message, build_panel_message(sess));
 		return;
 	}
@@ -137,8 +160,10 @@ void command_handler::on_button(const dpp::button_click_t &ev)
 		else {
 			if (auto sres = tm_.save(); !sres) { /* ignore */
 			}
+			refresh_session_snapshot(sess); // sync new powers into panel snapshot
 			auto m = build_panel_message(sess);
-			m.set_content("✅ 已記錄勝利隊伍： 隊伍 " + std::to_string(idx));
+			// Show which team won and the K-factor used after rating updates.
+			m.set_content("✅ 已記錄勝利隊伍：隊伍 " + std::to_string(idx + 1) + "，並更新了戰力（K = " + std::format("{:.3f}", tm_.get_k_factor()) + "）");
 			ev.reply(dpp::ir_update_message, m);
 		}
 		return;
@@ -226,18 +251,16 @@ std::vector<dpp::slashcommand> command_handler::commands(dpp::snowflake bot_id)
 	using sc = dpp::slashcommand;
 	std::vector<sc> cmds;
 	cmds.emplace_back("help", "顯示指令清單與說明", bot_id);
-
 	cmds.emplace_back("adduser", "新增或更新使用者的戰力", bot_id)
 			.add_option(dpp::command_option(dpp::co_user, "user", "Discord 使用者", true))
-			.add_option(dpp::command_option(dpp::co_integer, "power", "戰力 (>=0)", true));
-
+			.add_option(dpp::command_option(dpp::co_number, "power", "戰力 (>=0.0)", true));
 	cmds.emplace_back("removeuser", "移除使用者", bot_id).add_option(dpp::command_option(dpp::co_user, "user", "Discord 使用者", true));
-
 	cmds.emplace_back("listusers", "顯示已註冊的使用者", bot_id);
-
 	cmds.emplace_back("formteams", "分配隊伍", bot_id).add_option(dpp::command_option(dpp::co_integer, "teams", "隊伍數量", true));
-
 	cmds.emplace_back("history", "顯示近期對戰紀錄", bot_id).add_option(dpp::command_option(dpp::co_integer, "count", "顯示幾場比賽", false));
+	cmds.emplace_back("setk", "設定勝負調整係數 K（預設 4.0）", bot_id).add_option(dpp::command_option(dpp::co_number, "value", "K 值（>0）", true));
+	cmds.emplace_back("getk", "顯示目前的 K 值", bot_id);
+
 	return cmds;
 }
 
@@ -268,6 +291,12 @@ void command_handler::cmd_help(const dpp::slashcommand_t &ev)
 	// Records
 	e.add_field("戰績紀錄", "• `/history [count]` 顯示最近戰績\n", false);
 
+	// Argument
+	e.add_field("參數設定",
+							"• `/getk` 顯示目前 K 值（隱分係數）\n"
+							"• `/setk <value>` 設定 K 值（預設 4.0）",
+							false);
+
 	ev.reply(dpp::message().add_embed(e));
 }
 
@@ -279,7 +308,7 @@ void command_handler::cmd_help(const dpp::slashcommand_t &ev)
 void command_handler::cmd_adduser(const dpp::slashcommand_t &ev)
 {
 	dpp::snowflake uid = std::get<dpp::snowflake>(ev.get_parameter("user"));
-	int power = static_cast<int>(std::get<int64_t>(ev.get_parameter("power")));
+	double power = std::get<double>(ev.get_parameter("power"));
 
 	std::string username_snapshot;
 	if (auto it = ev.command.resolved.users.find(uid); it != ev.command.resolved.users.end()) {
@@ -313,7 +342,7 @@ void command_handler::cmd_adduser(const dpp::slashcommand_t &ev)
 
 	if (auto sres = tm_.save(); !sres) { /* ignore */
 	}
-	ev.reply(dpp::message("✅ 新增/更新使用者 <@" + std::to_string((uint64_t)uid) + "> 的戰力為 " + std::to_string(power)));
+	ev.reply(dpp::message("✅ 新增/更新使用者 <@" + std::to_string((uint64_t)uid) + "> 的戰力為 " + std::format("{:.3f}", power)));
 }
 
 /**
@@ -345,7 +374,7 @@ void command_handler::cmd_listusers(const dpp::slashcommand_t &ev)
 	auto users = tm_.list_users(user_sort::by_power_desc);
 	for (const auto &u : users) {
 		int rate = (u.games > 0) ? (u.wins * 100 + u.games / 2) / u.games : 0;
-		os << "<@" << static_cast<uint64_t>(u.id) << "> ** (" << u.combat_power << " CP)**"
+		os << "<@" << static_cast<uint64_t>(u.id) << "> ** (" << std::format("{:.3f}", u.combat_power) << " CP)**"
 			 << " — 勝率 " << rate << "% (" << u.wins << "/" << u.games << ")\n";
 	}
 
@@ -356,125 +385,6 @@ void command_handler::cmd_listusers(const dpp::slashcommand_t &ev)
 
 	e.set_description(os.str());
 	ev.reply(dpp::message().add_embed(e));
-}
-
-/**
- * @brief Build the dynamic control panel message:
- *					- An embed showing the current team count, selected users, and last formed teams
- *					- A select menu (multi-select) to choose participants
- *					- Buttons: "Assign" (primary), "End" (danger), and winner buttons (after teams exist)
- *        "Assign" is auto-disabled until we have at least one member per team.
- */
-dpp::message command_handler::build_panel_message(const selection_session &s) const
-{
-	dpp::message msg;
-	dpp::embed e;
-	e.set_title("分配隊伍面板");
-
-	auto db_users = tm_.list_users(user_sort::by_name_asc);
-	std::ostringstream body;
-	body << "隊伍數量： **" << s.num_teams << "**\n";
-
-	// Participants (rendered as Discord mentions)
-	if (!s.selected.empty()) {
-		body << "參與者 (" << s.selected.size() << ")： ";
-		for (auto id : s.selected)
-			body << "<@" << static_cast<uint64_t>(id) << "> ";
-		body << "\n\n";
-	}
-	else {
-		body << "*於底下的清單中選取要參與隊伍分配的使用者*\n";
-	}
-
-	if (!s.last_teams.empty()) {
-		int minp = std::numeric_limits<int>::max();
-		int maxp = std::numeric_limits<int>::min();
-
-		for (const auto &t : s.last_teams) {
-			minp = std::min(minp, t.total_power);
-			maxp = std::max(maxp, t.total_power);
-		}
-
-		for (size_t i = 0; i < s.last_teams.size(); ++i) {
-			const auto &team = s.last_teams[i];
-			body << "隊伍 " << (i + 1) << "（總戰力 " << team.total_power << " CP）：";
-			bool first = true;
-			for (const auto &m : team.members) {
-				if (!first)
-					body << "、";
-				body << "<@" << static_cast<uint64_t>(m.id) << ">";
-				first = false;
-			}
-			body << "\n";
-		}
-		body << "最大戰力差：" << (maxp - minp) << " CP\n";
-	}
-
-	e.set_description(body.str());
-	msg.add_embed(e);
-
-	dpp::component row1;
-	dpp::component menu;
-	menu.set_type(dpp::cot_selectmenu);
-	menu.set_id("panel:" + s.panel_id + ":select");
-	menu.set_placeholder("選擇參與分配的成員 (可複選)");
-
-	size_t max_opts = std::min<size_t>(db_users.size(), 25);
-	std::unordered_set<uint64_t> chosen;
-	for (auto id : s.selected)
-		chosen.insert((uint64_t)id);
-
-	for (size_t i = 0; i < max_opts; ++i) {
-		const auto &u = db_users[i];
-		bool def = chosen.contains((uint64_t)u.id);
-		std::string label = u.username.empty() ? ("<@" + std::to_string((uint64_t)u.id) + ">") : u.username;
-		dpp::select_option opt(label + " (" + std::to_string(u.combat_power) + ")", std::to_string((uint64_t)u.id), "已註冊成員");
-		if (def)
-			opt.set_default(true);
-
-		menu.add_select_option(std::move(opt));
-	}
-
-	menu.set_min_values(0);
-	menu.set_max_values((int)max_opts);
-	row1.add_component(menu);
-	msg.add_component(row1);
-
-	dpp::component row2;
-	bool can_assign = (int)s.selected.size() >= s.num_teams;
-	row2.add_component(dpp::component()
-												 .set_type(dpp::cot_button)
-												 .set_style(dpp::cos_primary)
-												 .set_label("分配")
-												 .set_id("panel:" + s.panel_id + ":assign")
-												 .set_disabled(!can_assign));
-	row2.add_component(dpp::component().set_type(dpp::cot_button).set_style(dpp::cos_danger).set_label("結束").set_id("panel:" + s.panel_id + ":end"));
-	msg.add_component(row2);
-
-	// Winner buttons (visible only after teams are generated)
-	if (!s.last_teams.empty()) {
-		dpp::component row;
-		int in_row = 0;
-		for (size_t i = 0; i < s.last_teams.size(); ++i) {
-			if (in_row == 5) {
-				msg.add_component(row);
-				row = dpp::component{};
-				in_row = 0;
-			}
-
-			row.add_component(dpp::component()
-														.set_type(dpp::cot_button)
-														.set_style(dpp::cos_success)
-														.set_label("隊伍 " + std::to_string(i + 1) + " 勝")
-														.set_id("panel:" + s.panel_id + ":win:" + std::to_string(i)));
-			++in_row;
-		}
-
-		if (in_row)
-			msg.add_component(row);
-	}
-
-	return msg;
 }
 
 /**
@@ -577,6 +487,154 @@ void command_handler::cmd_history(const dpp::slashcommand_t &ev)
 
 	e.set_description(os.str());
 	ev.reply(dpp::message().add_embed(e));
+}
+
+void command_handler::cmd_setk(const dpp::slashcommand_t &ev)
+{
+	double k = std::get<double>(ev.get_parameter("value"));
+	if (!(k > 0.0) || !std::isfinite(k)) {
+		reply_err(ev, "K 必須為正數");
+		return;
+	}
+
+	tm_.set_k_factor(k);
+	if (auto sres = tm_.save(); !sres) { /* ignore */
+	}
+	ev.reply(dpp::message("🔧 已設定 K = " + std::format("{:.3f}", k)));
+}
+
+void command_handler::cmd_getk(const dpp::slashcommand_t &ev) { ev.reply(dpp::message("當前 K = " + std::format("{:.3f}", tm_.get_k_factor()))); }
+
+/**
+ * @brief Build the dynamic control panel message:
+ *					- An embed showing the current team count, selected users, and last formed teams
+ *					- A select menu (multi-select) to choose participants
+ *					- Buttons: "Assign" (primary), "End" (danger), and winner buttons (after teams exist)
+ *        "Assign" is auto-disabled until we have at least one member per team.
+ */
+dpp::message command_handler::build_panel_message(const selection_session &s) const
+{
+	dpp::message msg;
+	dpp::embed e;
+	e.set_title("分配隊伍面板");
+
+	auto db_users = tm_.list_users(user_sort::by_name_asc);
+	std::ostringstream body;
+	body << "隊伍數量： **" << s.num_teams << "**\n";
+
+	// Participants (rendered as Discord mentions)
+	if (!s.selected.empty()) {
+		body << "參與者 (" << s.selected.size() << ")： ";
+		for (auto id : s.selected)
+			body << "<@" << static_cast<uint64_t>(id) << "> ";
+		body << "\n\n";
+
+		// Show helpful hints when assignment is not feasible.
+		if ((int)s.selected.size() < s.num_teams)
+			body << "⚠️ 人數不夠.\n";
+	}
+	else {
+		body << "*於底下的清單中選取要參與隊伍分配的使用者*\n";
+	}
+
+	if (!s.last_teams.empty()) {
+		double minp = std::numeric_limits<double>::infinity();
+		double maxp = -std::numeric_limits<double>::infinity();
+
+		for (const auto &t : s.last_teams) {
+			minp = std::min(minp, t.total_power);
+			maxp = std::max(maxp, t.total_power);
+		}
+
+		for (size_t i = 0; i < s.last_teams.size(); ++i) {
+			const auto &team = s.last_teams[i];
+			body << "隊伍 " << (i + 1) << "（總戰力 " << std::format("{:.3f}", team.total_power) << " CP）：";
+			bool first = true;
+			for (const auto &m : team.members) {
+				if (!first)
+					body << "、";
+				body << "<@" << static_cast<uint64_t>(m.id) << ">";
+				first = false;
+			}
+			body << "\n";
+		}
+		body << "最大戰力差：" << std::format("{:.3f}", (maxp - minp)) << " CP\n";
+	}
+
+	e.set_description(body.str());
+	msg.add_embed(e);
+
+	dpp::component row1;
+	dpp::component menu;
+	menu.set_type(dpp::cot_selectmenu);
+	menu.set_id("panel:" + s.panel_id + ":select");
+	menu.set_placeholder("選擇參與分配的成員 (可複選)");
+
+	size_t max_opts = std::min<size_t>(db_users.size(), 25);
+	std::unordered_set<uint64_t> chosen;
+	for (auto id : s.selected)
+		chosen.insert((uint64_t)id);
+
+	for (size_t i = 0; i < max_opts; ++i) {
+		const auto &u = db_users[i];
+		bool def = chosen.contains((uint64_t)u.id);
+		std::string label = u.username.empty() ? ("<@" + std::to_string((uint64_t)u.id) + ">") : u.username;
+		dpp::select_option opt(label + " (" + std::format("{:.3f}", u.combat_power) + ")", std::to_string((uint64_t)u.id), "已註冊成員");
+		if (def)
+			opt.set_default(true);
+
+		menu.add_select_option(std::move(opt));
+	}
+
+	menu.set_min_values(0);
+	menu.set_max_values((int)max_opts);
+	row1.add_component(menu);
+	msg.add_component(row1);
+
+	dpp::component row2;
+	row2.add_component(
+			dpp::component().set_type(dpp::cot_button).set_style(dpp::cos_primary).set_label("分配").set_id("panel:" + s.panel_id + ":assign").set_disabled(false));
+	row2.add_component(dpp::component().set_type(dpp::cot_button).set_style(dpp::cos_danger).set_label("結束").set_id("panel:" + s.panel_id + ":end"));
+	msg.add_component(row2);
+
+	// Winner buttons (visible only after teams are generated)
+	if (!s.last_teams.empty()) {
+		dpp::component row;
+		int in_row = 0;
+		for (size_t i = 0; i < s.last_teams.size(); ++i) {
+			if (in_row == 5) {
+				msg.add_component(row);
+				row = dpp::component{};
+				in_row = 0;
+			}
+
+			row.add_component(dpp::component()
+														.set_type(dpp::cot_button)
+														.set_style(dpp::cos_success)
+														.set_label("隊伍 " + std::to_string(i + 1) + " 勝")
+														.set_id("panel:" + s.panel_id + ":win:" + std::to_string(i)));
+			++in_row;
+		}
+
+		if (in_row)
+			msg.add_component(row);
+	}
+
+	return msg;
+}
+
+void command_handler::refresh_session_snapshot(selection_session &s) const
+{
+	for (auto &t : s.last_teams) {
+		for (auto &m : t.members) {
+			if (const auto *u = tm_.find_user(m.id)) {
+				// Sync display fields from the latest registry values
+				m.username = u->username;
+				m.combat_power = u->combat_power;
+			}
+		}
+		t.recalc_total_power(); // keep cached totals accurate
+	}
 }
 
 } // namespace terry::bot

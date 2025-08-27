@@ -14,7 +14,9 @@
 #include "team_manager.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <fstream>
+#include <numeric>
 #include <unordered_set>
 
 namespace terry::bot {
@@ -26,6 +28,15 @@ using json = nlohmann::json;
  */
 std::expected<ok_t, error> team_manager::load()
 {
+	// config (k-factor)
+	if (std::ifstream cf{CONFIG_FILE}) {
+		json c;
+		cf >> c;
+		k_factor_ = c.value("k_factor", 4.0);
+		delta_cap_scale_ = c.value("delta_cap_scale", 1.0);
+		rating_alpha_ = std::clamp(c.value("rating_alpha", 0.5), 0.0, 1.0);
+	}
+
 	// users
 	if (std::ifstream uf{USERS_FILE}) {
 		try {
@@ -39,6 +50,7 @@ std::expected<ok_t, error> team_manager::load()
 			return std::unexpected(error{std::string{"載入使用者失敗："} + e.what()});
 		}
 	}
+
 	// matches
 	if (std::ifstream mf{MATCHES_FILE}) {
 		try {
@@ -59,6 +71,15 @@ std::expected<ok_t, error> team_manager::load()
 std::expected<ok_t, error> team_manager::save() const
 {
 	try {
+		// config
+		if (std::ofstream cf{CONFIG_FILE}) {
+			json c;
+			c["k_factor"] = k_factor_;
+			c["delta_cap_scale"] = delta_cap_scale_;
+			c["rating_alpha"] = rating_alpha_;
+			cf << c.dump(2);
+		}
+
 		// users
 		if (std::ofstream uf{USERS_FILE}) {
 			json arr = json::array();
@@ -66,6 +87,7 @@ std::expected<ok_t, error> team_manager::save() const
 				arr.push_back(u.to_json());
 			uf << arr.dump(2);
 		}
+
 		// matches
 		if (std::ofstream mf{MATCHES_FILE}) {
 			json arr = json::array();
@@ -99,7 +121,7 @@ user *team_manager::find_user(user_id id) noexcept
 /**
  * @brief Insert or update a user (requires combat_power >= 0).
  */
-std::expected<ok_t, error> team_manager::upsert_user(user_id id, std::string username, int combat_power)
+std::expected<ok_t, error> team_manager::upsert_user(user_id id, std::string username, double combat_power)
 {
 	if (combat_power < 0)
 		return std::unexpected(error{"戰力必須 >= 0"});
@@ -164,43 +186,74 @@ std::vector<user> team_manager::participants_from_ids(std::span<const user_id> i
  */
 std::vector<team> team_manager::form_teams(std::span<const user_id> participant_ids, int num_teams, std::optional<uint64_t> seed) const
 {
+	// Allow uneven team sizes; only require at least one member per team.
 	if (num_teams <= 0)
 		return {};
-	auto participants = participants_from_ids(participant_ids);
-	if (participants.empty())
+
+	// Gather current user snapshots.
+	std::vector<user> players;
+	players.reserve(participant_ids.size());
+	for (auto id : participant_ids) {
+		if (auto it = users_.find(static_cast<uint64_t>(id)); it != users_.end())
+			players.push_back(it->second);
+	}
+
+	const int P = static_cast<int>(players.size());
+	const int T = num_teams;
+
+	// Infeasible if fewer participants than teams (we don't allow empty teams).
+	if (T > P)
+		return {};
+	if (P == 0)
 		return {};
 
-	// Sort by power desc for greedy balancing
-	std::ranges::sort(participants, std::greater{}, &user::combat_power);
+	// Randomize input order to keep results varied run-to-run.
+	std::mt19937_64 rng(seed.value_or(std::random_device{}()));
+	std::ranges::shuffle(players, rng);
 
-	std::vector<team> teams(num_teams);
+	// Prepare T empty teams; no capacity limit (uneven allowed).
+	std::vector<team> teams(T);
+	std::vector<double> totals(T, 0.0); // keep running total power per team
 
-	// Greedy assign lowest total power team first
-	for (const auto &p : participants) {
-		auto it = std::ranges::min_element(teams, {}, &team::total_power);
-		it->add_member(p);
-	}
-
-	// Optional randomization via swaps with slight tolerance
-	std::mt19937 eng(seed ? *seed : std::random_device{}());
-	int attempts = static_cast<int>(participants.size()) / 4;
-	auto team_idx = std::uniform_int_distribution<size_t>(0, teams.size() - 1);
-	for (int i = 0; i < attempts; ++i) {
-		size_t a = team_idx(eng), b = team_idx(eng);
-		if (a == b || teams[a].members.empty() || teams[b].members.empty())
-			continue;
-		auto ma = std::uniform_int_distribution<size_t>(0, teams[a].members.size() - 1)(eng);
-		auto mb = std::uniform_int_distribution<size_t>(0, teams[b].members.size() - 1)(eng);
-
-		int before = std::abs(teams[a].total_power - teams[b].total_power);
-		int after = std::abs((teams[a].total_power - teams[a].members[ma].combat_power + teams[b].members[mb].combat_power) -
-												 (teams[b].total_power - teams[b].members[mb].combat_power + teams[a].members[ma].combat_power));
-		if (after <= before + 50) {
-			std::swap(teams[a].members[ma], teams[b].members[mb]);
-			teams[a].recalc_total_power();
-			teams[b].recalc_total_power();
+	auto projected_spread = [&](size_t place_idx, double add_power) {
+		// Compute max(total) - min(total) if we assign 'add_power' to team 'place_idx'.
+		double maxv = -std::numeric_limits<double>::infinity();
+		double minv = std::numeric_limits<double>::infinity();
+		for (size_t j = 0; j < totals.size(); ++j) {
+			const double tj = (j == place_idx) ? (totals[j] + add_power) : totals[j];
+			if (tj > maxv)
+				maxv = tj;
+			if (tj < minv)
+				minv = tj;
 		}
+		return maxv - minv;
+	};
+
+	// Greedy assignment: for each player, put them where the total-power spread is minimized.
+	for (const auto &u : players) {
+		size_t best_i = 0;
+		double best_cost = std::numeric_limits<double>::infinity();
+		bool chosen = false;
+
+		for (size_t i = 0; i < teams.size(); ++i) {
+			const double cost = projected_spread(i, u.combat_power);
+			if (!chosen || cost < best_cost) {
+				best_cost = cost;
+				best_i = i;
+				chosen = true;
+			}
+			else if (cost == best_cost) {
+				// Random tie-break to preserve diversity across runs.
+				if (std::uniform_int_distribution<int>(0, 1)(rng)) {
+					best_cost = cost;
+					best_i = i;
+				}
+			}
+		}
+		teams[best_i].add_member(u);
+		totals[best_i] += u.combat_power;
 	}
+
 	return teams;
 }
 
@@ -216,8 +269,71 @@ std::expected<ok_t, error> team_manager::record_match(std::vector<team> teams, s
 		}
 	}
 
-	// update per-user stats if teams are provided
+	// update per-user stats and hidden rating if teams are provided
 	if (!teams.empty()) {
+		// ---- Hidden rating adjustment (generalized to N teams) ----
+		// Denominator floor to avoid INF and huge swings when power is ~0
+		constexpr double DENOM_FLOOR = 1.0;
+		constexpr double MIN_POWER = 0.0;
+
+		std::vector<double> team_sum(teams.size()), team_cnt(teams.size());
+		for (size_t i = 0; i < teams.size(); ++i) {
+			double s = 0.0;
+			for (const auto &m : teams[i].members)
+				s += m.combat_power;
+			team_sum[i] = s;
+			team_cnt[i] = static_cast<double>(teams[i].members.size());
+		}
+
+		// Opponents' size-weighted average for each team
+		std::vector<double> opp_avg(teams.size());
+		const double total_sum = std::accumulate(team_sum.begin(), team_sum.end(), 0.0);
+		const double total_cnt = std::accumulate(team_cnt.begin(), team_cnt.end(), 0.0);
+		for (size_t i = 0; i < teams.size(); ++i) {
+			const double sum_excl = total_sum - team_sum[i];
+			const double cnt_excl = std::max(total_cnt - team_cnt[i], 1.0);
+			opp_avg[i] = sum_excl / cnt_excl;
+		}
+
+		std::unordered_set<int> winset(winning_teams.begin(), winning_teams.end());
+
+		for (size_t ti = 0; ti < teams.size(); ++ti) {
+			const bool winner = winset.contains(static_cast<int>(ti));
+			for (const auto &m : teams[ti].members) {
+				if (auto *u = find_user(m.id)) {
+					const double p_raw = u->combat_power;
+					const double oa = opp_avg[ti];
+
+					// Stabilized denominators
+					const double p_den = std::max(p_raw, DENOM_FLOOR);
+					const double oa_den = std::max(oa, DENOM_FLOOR);
+
+					// Raw delta from your original formula
+					double delta = winner ? (k_factor_ * (oa_den / p_den)) : (-k_factor_ * (p_den / oa_den));
+
+					// Hard-cap the absolute change based on opponent strength
+					// cap grows sublinearly with opponent strength (sqrt), scaled by k and a config knob.
+					const double cap = std::max(0.0, delta_cap_scale_ * k_factor_ * std::sqrt(oa_den));
+					if (cap > 0.0) {
+						if (delta > cap)
+							delta = cap;
+						if (delta < -cap)
+							delta = -cap;
+					}
+
+					// Exponential smoothing: only apply a fraction alpha of the delta
+					const double alpha = rating_alpha_; // in [0,1]
+					double np = p_raw + alpha * delta;
+
+					// Safety: avoid NaN/INF and enforce lower bound
+					if (!std::isfinite(np))
+						np = p_raw;
+					u->combat_power = std::max(MIN_POWER, np);
+				}
+			}
+		}
+
+		// W/L stats
 		std::unordered_set<uint64_t> winner_ids;
 		for (int wi : winning_teams) {
 			for (const auto &m : teams[wi].members) {
