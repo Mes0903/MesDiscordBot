@@ -96,6 +96,7 @@ void CommandHandler::handle_update_power(const dpp::slashcommand_t &event)
 	auto power_option = event.get_parameter("new_power");
 
 	if (std::holds_alternative<dpp::snowflake>(user_option) && std::holds_alternative<int64_t>(power_option)) {
+
 		dpp::snowflake user_id = std::get<dpp::snowflake>(user_option);
 		int new_power = static_cast<int>(std::get<int64_t>(power_option));
 
@@ -171,6 +172,7 @@ void CommandHandler::handle_create_teams(const dpp::slashcommand_t &event)
 			return;
 		}
 
+		// Create user selection UI
 		create_user_selection_interface(event, num_teams, all_users);
 	}
 	else {
@@ -181,11 +183,11 @@ void CommandHandler::handle_create_teams(const dpp::slashcommand_t &event)
 void CommandHandler::handle_match_history(const dpp::slashcommand_t &event)
 {
 	auto count_option = event.get_parameter("count");
-	int count = 5;
+	int count = 5; // default
 
 	if (std::holds_alternative<int64_t>(count_option)) {
 		count = static_cast<int>(std::get<int64_t>(count_option));
-		count = std::max(1, std::min(count, 20));
+		count = std::max(1, std::min(count, 20)); // limit between 1-20
 	}
 
 	auto recent_matches = team_manager.get_recent_matches(count);
@@ -195,24 +197,37 @@ void CommandHandler::handle_match_history(const dpp::slashcommand_t &event)
 		return;
 	}
 
-	dpp::embed embed = dpp::embed().set_color(0x9932cc).set_title("最近的對戰紀錄");
+	dpp::embed embed = dpp::embed().set_title("最近的對戰紀錄");
 
 	for (size_t i = 0; i < recent_matches.size(); ++i) {
 		const auto &match = recent_matches[i];
 
 		std::string match_info = "**日期:** " + format_timestamp(match.timestamp) + "\n";
-		match_info += "**隊伍：** " + std::to_string(match.teams.size()) + "\n";
+		// match_info += "**隊伍數量：** " + std::to_string(match.teams.size());
 
 		for (size_t t = 0; t < match.teams.size(); ++t) {
-			match_info += "隊伍 " + std::to_string(t + 1) + " (" + std::to_string(match.teams[t].total_power) + " CP)";
+			bool is_winner = std::find(match.winning_teams.begin(), match.winning_teams.end(), static_cast<int>(t)) != match.winning_teams.end();
 
-			if (std::find(match.winning_teams.begin(), match.winning_teams.end(), static_cast<int>(t)) != match.winning_teams.end()) {
-				match_info += " 🏆";
+			match_info += "**\n隊伍 " + std::to_string(t + 1);
+			if (is_winner) {
+				match_info += " 🏆** (獲勝)\n";
 			}
-			match_info += "\n";
+			else {
+				match_info += "**\n";
+			}
+
+			// Add team members
+			match_info += "• ";
+			for (size_t m = 0; m < match.teams[t].members.size(); ++m) {
+				const auto &member = match.teams[t].members[m];
+				match_info += "<@" + std::to_string(static_cast<uint64_t>(member.discord_id)) + ">";
+				if (m < match.teams[t].members.size() - 1) {
+					match_info += "、";
+				}
+			}
 		}
 
-		embed.add_field("Match #" + std::to_string(recent_matches.size() - i), match_info, false);
+		embed.add_field("\n\n比賽 #" + std::to_string(recent_matches.size() - i), match_info, false);
 	}
 
 	event.reply(dpp::message().add_embed(embed));
@@ -220,26 +235,27 @@ void CommandHandler::handle_match_history(const dpp::slashcommand_t &event)
 
 void CommandHandler::handle_help(const dpp::slashcommand_t &event)
 {
-	dpp::embed embed = dpp::embed().set_title("🤖 何一萬 AOE 小幫手：指令說明").set_description("AOE2 Discord 分組機器人 - 讓何一萬來幫你平衡的分配隊伍");
+	dpp::embed embed =
+			dpp::embed().set_color(0x00d4ff).set_title("🤖 何一萬 AOE 小幫手：指令說明").set_description("AOE2 Discord 分組機器人 - 讓何一萬來幫你平衡的分配隊伍");
 
 	// 使用者管理指令
 	embed.add_field("👥 **使用者管理**",
-									"• `/adduser <使用者> <戰力>`：新增使用者到系統\n"
-									"• `/removeuser <使用者>`：從系統中移除使用者\n"
-									"• `/updatepower <使用者> <新戰力>`：更新使用者的戰力值\n"
-									"• `/listusers`：列出所有註冊的使用者",
+									"• `/adduser <使用者> <戰力>` - 新增使用者到系統\n"
+									"• `/removeuser <使用者>` - 從系統中移除使用者\n"
+									"• `/updatepower <使用者> <新戰力>` - 更新使用者的戰力值\n"
+									"• `/listusers` - 列出所有註冊的使用者",
 									false);
 
 	// 分組功能
 	embed.add_field("⚔️ **分組功能**",
-									"• `/createteams <隊伍數量>`：開始互動式分組\n"
+									"• `/createteams <隊伍數量>` - 開始互動式分組\n"
 									"  └ 使用按鈕選擇參與者，系統會自動平衡戰力\n"
 									"  └ 支援 2-10 組隊伍，最多顯示 25 位成員",
 									false);
 
 	// 歷史紀錄
 	embed.add_field("📊 **歷史紀錄**",
-									"• `/history [數量]`：查看最近的比賽記錄\n"
+									"• `/history [數量]` - 查看最近的比賽記錄\n"
 									"  └ 預設顯示 5 場，最多可顯示 20 場",
 									false);
 
@@ -253,8 +269,8 @@ void CommandHandler::handle_help(const dpp::slashcommand_t &event)
 
 	// 按鈕說明
 	embed.add_field("🔘 **按鈕說明**",
-									"• ⬜ 灰色按鈕：未選擇\n"
-									"• ✅ 綠色按鈕：已選擇\n"
+									"• ⬜ 灰色按鈕 = 未選擇\n"
+									"• ✅ 綠色按鈕 = 已選擇\n"
 									"• ⚔️ 開始分組 / 🔄 重新分組\n"
 									"• ✅ 全選 • ❌ 清除選擇",
 									false);
@@ -363,6 +379,12 @@ void CommandHandler::handle_button_click(const dpp::button_click_t &event)
 	else if (custom_id.starts_with("toggle_user_")) {
 		handle_toggle_user_interaction(event);
 	}
+	else if (custom_id.starts_with("record_victory_")) {
+		handle_record_victory_interaction(event);
+	}
+	else if (custom_id.starts_with("record_match_")) {
+		handle_record_match_interaction(event);
+	}
 }
 
 void CommandHandler::handle_select_click(const dpp::select_click_t &event)
@@ -383,6 +405,9 @@ void CommandHandler::handle_select_click(const dpp::select_click_t &event)
 			}
 		}
 	}
+	else if (custom_id.starts_with("select_winner_")) {
+		handle_select_winner_interaction(event);
+	}
 }
 
 void CommandHandler::handle_user_selection_interaction(const dpp::button_click_t &event)
@@ -399,7 +424,6 @@ void CommandHandler::handle_toggle_user_interaction(const dpp::button_click_t &e
 {
 	const std::string &custom_id = event.custom_id;
 
-	// Parse: "toggle_user_" + session_id + "_" + user_id
 	size_t prefix_len = std::string("toggle_user_").length();
 	size_t first_underscore = custom_id.find('_', prefix_len);
 
@@ -466,11 +490,13 @@ void CommandHandler::handle_create_teams_button_interaction(const dpp::button_cl
 		return;
 	}
 
+	// Store the teams in the session for later match recording
+	session->set_current_teams(teams);
+
 	// Create result message with teams and keep the selection interface
 	dpp::message result_msg = create_teams_result_with_selection(*session, teams);
 
 	event.reply(dpp::ir_update_message, result_msg);
-	// Don't remove the session - keep it for potential re-selection
 }
 
 void CommandHandler::handle_select_all_interaction(const dpp::button_click_t &event, const std::string &session_id)
@@ -495,6 +521,132 @@ void CommandHandler::handle_clear_selection_interaction(const dpp::button_click_
 
 	session->clear_selection();
 	event.reply(dpp::ir_update_message, create_button_selection_message(*session));
+}
+
+void CommandHandler::handle_record_victory_interaction(const dpp::button_click_t &event)
+{
+	const std::string &custom_id = event.custom_id;
+
+	size_t prefix_len = std::string("record_victory_").length();
+	size_t first_underscore = custom_id.find('_', prefix_len);
+
+	if (first_underscore == std::string::npos) {
+		event.reply(dpp::ir_channel_message_with_source, dpp::message("無效的按鈕ID").set_flags(dpp::m_ephemeral));
+		return;
+	}
+
+	std::string session_id = custom_id.substr(prefix_len, first_underscore - prefix_len);
+	std::string team_index_str = custom_id.substr(first_underscore + 1);
+
+	auto *session = selection_manager.get_session(session_id);
+	if (!session) {
+		event.reply(dpp::ir_channel_message_with_source, dpp::message("會話已過期").set_flags(dpp::m_ephemeral));
+		return;
+	}
+
+	try {
+		int team_index = std::stoi(team_index_str);
+
+		auto teams = session->get_current_teams();
+		if (teams.empty() || team_index >= static_cast<int>(teams.size())) {
+			event.reply(dpp::ir_channel_message_with_source, dpp::message("無效的隊伍索引").set_flags(dpp::m_ephemeral));
+			return;
+		}
+
+		std::vector<int> winning_teams = {team_index};
+		team_manager.record_match(teams, winning_teams);
+
+		dpp::embed embed = dpp::embed()
+													 .set_color(0x00ff00)
+													 .set_title("🏆 比賽結果已記錄！")
+													 .set_description("隊伍 " + std::to_string(team_index + 1) + " 獲勝")
+													 .add_field("記錄時間", format_timestamp(std::chrono::system_clock::now()), false);
+
+		event.reply(dpp::ir_channel_message_with_source, dpp::message().add_embed(embed).set_flags(dpp::m_ephemeral));
+
+	} catch (const std::exception &) {
+		event.reply(dpp::ir_channel_message_with_source, dpp::message("無效的隊伍索引").set_flags(dpp::m_ephemeral));
+	}
+}
+
+void CommandHandler::handle_record_match_interaction(const dpp::button_click_t &event)
+{
+	const std::string &custom_id = event.custom_id;
+
+	size_t prefix_len = std::string("record_match_").length();
+	std::string session_id = custom_id.substr(prefix_len);
+
+	auto *session = selection_manager.get_session(session_id);
+	if (!session) {
+		event.reply(dpp::ir_channel_message_with_source, dpp::message("會話已過期").set_flags(dpp::m_ephemeral));
+		return;
+	}
+
+	auto teams = session->get_current_teams();
+	if (teams.empty()) {
+		event.reply(dpp::ir_channel_message_with_source, dpp::message("沒有找到隊伍資料").set_flags(dpp::m_ephemeral));
+		return;
+	}
+
+	dpp::embed embed = dpp::embed().set_color(0x0099ff).set_title("記錄比賽結果").set_description("請選擇獲勝的隊伍：");
+
+	dpp::message msg;
+	msg.add_embed(embed);
+
+	dpp::component select_menu;
+	select_menu.set_type(dpp::cot_selectmenu).set_placeholder("選擇獲勝隊伍").set_min_values(1).set_max_values(1).set_id("select_winner_" + session_id);
+
+	for (size_t i = 0; i < teams.size(); ++i) {
+		select_menu.add_select_option(dpp::select_option("隊伍 " + std::to_string(i + 1) + " (戰力: " + std::to_string(teams[i].total_power) + ")",
+																										 std::to_string(i), "選擇隊伍 " + std::to_string(i + 1) + " 為獲勝隊伍"));
+	}
+
+	msg.add_component(dpp::component().add_component(select_menu));
+
+	event.reply(dpp::ir_channel_message_with_source, msg.set_flags(dpp::m_ephemeral));
+}
+
+void CommandHandler::handle_select_winner_interaction(const dpp::select_click_t &event)
+{
+	const std::string &custom_id = event.custom_id;
+
+	size_t prefix_len = std::string("select_winner_").length();
+	std::string session_id = custom_id.substr(prefix_len);
+
+	auto *session = selection_manager.get_session(session_id);
+	if (!session) {
+		event.reply(dpp::ir_channel_message_with_source, dpp::message("會話已過期").set_flags(dpp::m_ephemeral));
+		return;
+	}
+
+	if (event.values.empty()) {
+		event.reply(dpp::ir_channel_message_with_source, dpp::message("請選擇一個隊伍").set_flags(dpp::m_ephemeral));
+		return;
+	}
+
+	try {
+		int team_index = std::stoi(event.values[0]);
+
+		auto teams = session->get_current_teams();
+		if (teams.empty() || team_index >= static_cast<int>(teams.size())) {
+			event.reply(dpp::ir_channel_message_with_source, dpp::message("無效的隊伍索引").set_flags(dpp::m_ephemeral));
+			return;
+		}
+
+		std::vector<int> winning_teams = {team_index};
+		team_manager.record_match(teams, winning_teams);
+
+		dpp::embed embed = dpp::embed()
+													 .set_color(0x00ff00)
+													 .set_title("🏆 比賽結果已記錄！")
+													 .set_description("隊伍 " + std::to_string(team_index + 1) + " 獲勝")
+													 .add_field("記錄時間", format_timestamp(std::chrono::system_clock::now()), false);
+
+		event.reply(dpp::ir_update_message, dpp::message().add_embed(embed));
+
+	} catch (const std::exception &) {
+		event.reply(dpp::ir_channel_message_with_source, dpp::message("無效的隊伍索引").set_flags(dpp::m_ephemeral));
+	}
 }
 
 std::optional<std::string> CommandHandler::extract_session_id(const std::string &custom_id, const std::string &prefix)
@@ -641,10 +793,8 @@ dpp::message CommandHandler::create_teams_result_with_selection(const UserSelect
 	const auto &users = session.get_available_users();
 	const auto &selected_ids = session.get_selected_user_ids();
 
-	// Create embed showing both team results and selection status
 	dpp::embed embed = dpp::embed().set_color(0x00ff00).set_title("🏆 分組結果 - " + std::to_string(teams.size()) + " 組隊伍");
 
-	// Add team information
 	for (size_t i = 0; i < teams.size(); ++i) {
 		std::string team_info;
 		for (const auto &member : teams[i].members) {
@@ -655,14 +805,12 @@ dpp::message CommandHandler::create_teams_result_with_selection(const UserSelect
 		embed.add_field("隊伍 " + std::to_string(i + 1), team_info, true);
 	}
 
-	// Add balance information
 	if (teams.size() >= 2) {
 		auto min_max = std::minmax_element(teams.begin(), teams.end(), [](const Team &a, const Team &b) { return a.total_power < b.total_power; });
 		int power_difference = min_max.second->total_power - min_max.first->total_power;
 		embed.add_field("戰力差", std::to_string(power_difference) + "分", false);
 	}
 
-	// Add selected users information
 	std::string selected_user_list;
 	int selected_power = 0;
 	int selected_count = 0;
@@ -681,7 +829,6 @@ dpp::message CommandHandler::create_teams_result_with_selection(const UserSelect
 	dpp::message msg;
 	msg.add_embed(embed);
 
-	// Keep the user selection buttons for potential re-selection
 	constexpr size_t MAX_BUTTONS_PER_ROW = 5;
 	constexpr size_t MAX_ROWS = 5;
 	constexpr size_t MAX_BUTTONS_PER_MESSAGE = MAX_BUTTONS_PER_ROW * MAX_ROWS;
@@ -711,7 +858,6 @@ dpp::message CommandHandler::create_teams_result_with_selection(const UserSelect
 		msg.add_component(button_row);
 	}
 
-	// Add control buttons with "重新分組" instead of "開始分組"
 	dpp::component control_row;
 	control_row.set_type(dpp::cot_action_row);
 
@@ -737,6 +883,39 @@ dpp::message CommandHandler::create_teams_result_with_selection(const UserSelect
 																.set_emoji("❌"));
 
 	msg.add_component(control_row);
+
+	// Add victory recording buttons
+	if (teams.size() <= 5) { // Only if we have 5 or fewer teams (button limit)
+		dpp::component victory_row;
+		victory_row.set_type(dpp::cot_action_row);
+
+		for (size_t i = 0; i < teams.size(); ++i) {
+			victory_row.add_component(dpp::component()
+																		.set_type(dpp::cot_button)
+																		.set_id("record_victory_" + session.get_session_id() + "_" + std::to_string(i))
+																		.set_label("隊伍" + std::to_string(i + 1) + "獲勝")
+																		.set_style(dpp::cos_success)
+																		.set_emoji("🏆"));
+		}
+
+		msg.add_component(victory_row);
+	}
+
+	// If more than 5 teams, add a general "記錄比賽" button
+	if (teams.size() > 5) {
+		dpp::component record_row;
+		record_row.set_type(dpp::cot_action_row);
+
+		record_row.add_component(dpp::component()
+																 .set_type(dpp::cot_button)
+																 .set_id("record_match_" + session.get_session_id())
+																 .set_label("記錄比賽結果")
+																 .set_style(dpp::cos_success)
+																 .set_emoji("📝"));
+
+		msg.add_component(record_row);
+	}
+
 	return msg;
 }
 

@@ -19,6 +19,7 @@ private:
 	int num_teams;
 	std::vector<User> available_users;
 	std::unordered_set<uint64_t> selected_user_ids;
+	std::vector<Team> current_teams; // Store current team composition
 	std::chrono::steady_clock::time_point created_at;
 
 public:
@@ -69,6 +70,11 @@ public:
 	}
 
 	void clear_selection() { selected_user_ids.clear(); }
+
+	// Store and retrieve current teams
+	void set_current_teams(const std::vector<Team> &teams) { current_teams = teams; }
+
+	std::vector<Team> get_current_teams() const { return current_teams; }
 
 	const std::string &get_session_id() const { return session_id; }
 	int get_num_teams() const { return num_teams; }
@@ -147,6 +153,9 @@ private:
 	void handle_create_teams_button_interaction(const dpp::button_click_t &event, const std::string &session_id);
 	void handle_select_all_interaction(const dpp::button_click_t &event, const std::string &session_id);
 	void handle_clear_selection_interaction(const dpp::button_click_t &event, const std::string &session_id);
+	void handle_record_victory_interaction(const dpp::button_click_t &event);
+	void handle_record_match_interaction(const dpp::button_click_t &event);
+	void handle_select_winner_interaction(const dpp::select_click_t &event);
 
 	// Helper functions
 	void create_user_selection_interface(const dpp::slashcommand_t &event, int num_teams, const std::vector<User> &users);
