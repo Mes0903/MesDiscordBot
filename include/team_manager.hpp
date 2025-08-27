@@ -15,7 +15,7 @@ enum class user_sort { by_power_desc, by_power_asc, by_name_asc };
 
 class team_manager {
 public:
-	team_manager();
+	team_manager() = default;
 
 	// persistence
 	[[nodiscard]] std::expected<ok_t, error> load();
@@ -42,7 +42,6 @@ public:
 private:
 	std::unordered_map<uint64_t, user> users_;
 	std::vector<match_record> history_;
-	mutable std::mt19937 rng_;
 
 	static constexpr const char *USERS_FILE = "users.json";
 	static constexpr const char *MATCHES_FILE = "matches.json";

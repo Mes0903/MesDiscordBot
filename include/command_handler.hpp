@@ -54,7 +54,6 @@ private:
 	static std::string make_token();
 	static bool starts_with(const std::string &s, const std::string &p) { return s.rfind(p, 0) == 0; }
 	[[nodiscard]] dpp::message build_panel_message(const selection_session &s) const;
-	[[nodiscard]] dpp::embed help_embed(std::string topic) const;
 };
 
 } // namespace terry::bot

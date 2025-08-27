@@ -79,17 +79,9 @@ void command_handler::on_slash(const dpp::slashcommand_t &ev)
 
 void command_handler::on_button(const dpp::button_click_t &ev)
 {
-	auto cid = ev.custom_id;
+	const auto &cid = ev.custom_id;
 
-	// help panel close
-	if (cid == "help:close") {
-		dpp::message m;
-		m.set_content("❎ Help panel closed.");
-		ev.reply(dpp::ir_update_message, m);
-		return;
-	}
-
-	// panel actions
+	// Expect panel actions only
 	if (!starts_with(cid, "panel:")) {
 		ev.reply(dpp::ir_channel_message_with_source, dpp::message("Unsupported button").set_flags(dpp::m_ephemeral));
 		return;
@@ -124,16 +116,7 @@ void command_handler::on_button(const dpp::button_click_t &ev)
 			ev.reply(dpp::ir_channel_message_with_source, dpp::message("Select at least one member per team before assigning.").set_flags(dpp::m_ephemeral));
 			return;
 		}
-		sess.last_teams = tm_.form_teams(sess.selected, sess.num_teams);
-		ev.reply(dpp::ir_update_message, build_panel_message(sess));
-		return;
-	}
-
-	if (action == "reassign") {
-		if (sess.selected.empty()) {
-			ev.reply(dpp::ir_channel_message_with_source, dpp::message("No participants selected.").set_flags(dpp::m_ephemeral));
-			return;
-		}
+		// Re/assign teams using the current selection
 		sess.last_teams = tm_.form_teams(sess.selected, sess.num_teams);
 		ev.reply(dpp::ir_update_message, build_panel_message(sess));
 		return;
@@ -177,16 +160,7 @@ void command_handler::on_button(const dpp::button_click_t &ev)
 
 void command_handler::on_select(const dpp::select_click_t &ev)
 {
-	auto cid = ev.custom_id;
-
-	// help topic switch
-	if (cid == "help:topic") {
-		std::string topic = ev.values.empty() ? "overview" : ev.values.front();
-		dpp::message m;
-		m.add_embed(help_embed(topic));
-		ev.reply(dpp::ir_update_message, m);
-		return;
-	}
+	const auto &cid = ev.custom_id;
 
 	if (!starts_with(cid, "panel:")) {
 		ev.reply(dpp::ir_channel_message_with_source, dpp::message("Unsupported select").set_flags(dpp::m_ephemeral));
@@ -219,7 +193,7 @@ void command_handler::on_select(const dpp::select_click_t &ev)
 		return;
 	}
 
-	// values contain snowflake strings
+	// Update selection from values
 	sess.selected.clear();
 	for (const auto &v : ev.values) {
 		try {
@@ -227,7 +201,7 @@ void command_handler::on_select(const dpp::select_click_t &ev)
 		} catch (...) {
 		}
 	}
-	// reset the last teams until "Assign"
+	// Clear previous teams until re/assign
 	sess.last_teams.clear();
 	ev.reply(dpp::ir_update_message, build_panel_message(sess));
 }
@@ -261,64 +235,32 @@ std::vector<dpp::slashcommand> command_handler::commands(dpp::snowflake bot_id)
 	return cmds;
 }
 
-// ---------- HELP ----------
-
-dpp::embed command_handler::help_embed(std::string topic) const
-{
-	dpp::embed e;
-	e.set_title("Bot Help");
-	if (topic == "users") {
-		e.set_description("**User Management**\n"
-											"`/adduser <user> <power>` 新增或更新成員戰力\n"
-											"`/setpower <user> <power>` 單純更新戰力\n"
-											"`/removeuser <user>` 移除成員\n"
-											"`/listusers` 顯示目前資料庫\n");
-	}
-	else if (topic == "panel") {
-		e.set_description("**Team Formation Panel**\n"
-											"1. `/formteams <teams>` 開啟面板\n"
-											"2. 從選單勾選要參與的人\n"
-											"3. 按 **分配** 產生隊伍\n"
-											"4. 可按 **重新分配** 隨機重抽（相同人員）\n"
-											"5. 可按 **Team i 勝** 紀錄勝利隊伍\n"
-											"6. **結束** 鎖定面板（面板失效）\n");
-	}
-	else if (topic == "records") {
-		e.set_description("**Match Records**\n"
-											"`/history [count]` 查看最近戰績（含隊員）\n"
-											"在面板按下「Team i 勝」會自動寫入紀錄\n");
-	}
-	else {
-		e.set_description("選擇主題以查看說明：\n- 使用者管理\n- 分隊面板\n- 戰績紀錄\n"
-											"或直接輸入 `/help`");
-	}
-	return e;
-}
-
 void command_handler::cmd_help(const dpp::slashcommand_t &ev)
 {
-	dpp::message msg;
-	msg.add_embed(help_embed("overview"));
+	dpp::embed e;
+	e.set_title("指令說明 / Help");
 
-	// 選單
-	dpp::component row1;
-	dpp::component menu;
-	menu.set_type(dpp::cot_selectmenu);
-	menu.set_id("help:topic");
-	menu.set_placeholder("選擇主題…");
-	menu.add_select_option(dpp::select_option("總覽", "overview", "Overview"));
-	menu.add_select_option(dpp::select_option("使用者管理", "users", "User management"));
-	menu.add_select_option(dpp::select_option("分隊面板", "panel", "Team formation panel"));
-	menu.add_select_option(dpp::select_option("戰績紀錄", "records", "Match records"));
-	row1.add_component(menu);
-	msg.add_component(row1);
+	// User management
+	e.add_field("使用者管理",
+							"• `/adduser <user> <power>` 新增或更新成員戰力\n"
+							"• `/setpower <user> <power>` 更新戰力\n"
+							"• `/removeuser <user>` 移除成員\n"
+							"• `/listusers` 顯示使用者清單",
+							false);
 
-	// 關閉按鈕
-	dpp::component row2;
-	row2.add_component(dpp::component().set_type(dpp::cot_button).set_style(dpp::cos_secondary).set_label("關閉").set_id("help:close"));
-	msg.add_component(row2);
+	// Team formation panel
+	e.add_field("分隊面板",
+							"• `/formteams <teams>` 開啟面板\n"
+							"• 於下拉選單勾選參與者（選單顯示 username）\n"
+							"• 按 **分配** 產生/重抽隊伍\n"
+							"• 按 **隊伍 i 勝** 紀錄勝方\n"
+							"• 按 **結束** 結束面板（面板失效）",
+							false);
 
-	ev.reply(msg);
+	// Records
+	e.add_field("戰績紀錄", "• `/history [count]` 顯示最近戰績\n", false);
+
+	ev.reply(dpp::message().add_embed(e));
 }
 
 // ---------- USER COMMANDS ----------
@@ -328,7 +270,6 @@ void command_handler::cmd_adduser(const dpp::slashcommand_t &ev)
 	dpp::snowflake uid = std::get<dpp::snowflake>(ev.get_parameter("user"));
 	int power = static_cast<int>(std::get<int64_t>(ev.get_parameter("power")));
 
-	// 1) 先用 slash 互動的 resolved（最可靠，包含被選到的 user）
 	std::string username_snapshot;
 	if (auto it = ev.command.resolved.users.find(uid); it != ev.command.resolved.users.end()) {
 		const dpp::user &ru = it->second;
@@ -338,7 +279,6 @@ void command_handler::cmd_adduser(const dpp::slashcommand_t &ev)
 			username_snapshot = ru.global_name;
 	}
 
-	// 2) 再退到全域快取
 	if (username_snapshot.empty()) {
 		if (auto u = dpp::find_user(uid)) {
 			if (!u->username.empty())
@@ -433,12 +373,14 @@ dpp::message command_handler::build_panel_message(const selection_session &s) co
 	dpp::embed e;
 	e.set_title("Team Formation Panel");
 
-	// 取一次 DB，供下拉選/隊伍成員用 username
+	// We only need DB snapshot to populate the select menu labels (username),
+	// the panel text itself uses tags to keep it short and clear.
 	auto db_users = tm_.list_users(user_sort::by_name_asc);
+
 	std::ostringstream body;
 	body << "Teams: **" << s.num_teams << "**\n";
 
-	// Participants 行用「tag」
+	// Participants (as tags)
 	if (!s.selected.empty()) {
 		body << "Participants (" << s.selected.size() << "): ";
 		for (auto id : s.selected)
@@ -449,15 +391,15 @@ dpp::message command_handler::build_panel_message(const selection_session &s) co
 		body << "_Select participants in the menu below._\n";
 	}
 
-	// 分隊結果：隊員名稱用 DB 的 username（沒有才退回 mention）
+	// Team result: one line per team, tags only (no power lines per member)
 	if (!s.last_teams.empty()) {
 		for (size_t i = 0; i < s.last_teams.size(); ++i) {
-			body << "隊伍 " << (i + 1) << " (" << s.last_teams[i].total_power << " CP)：";
+			body << "隊伍" << (i + 1) << "：";
 			bool first = true;
 			for (const auto &m : s.last_teams[i].members) {
 				if (!first)
 					body << "、";
-				body << "<@" << static_cast<uint64_t>(m.id) << "> (" << m.combat_power << " CP)";
+				body << "<@" << static_cast<uint64_t>(m.id) << ">";
 				first = false;
 			}
 			body << "\n";
@@ -466,16 +408,18 @@ dpp::message command_handler::build_panel_message(const selection_session &s) co
 	e.set_description(body.str());
 	msg.add_embed(e);
 
-	// row1: 下拉選單（label 顯示 username）
+	// Row1: select menu (labels show username; defaults checked for selected)
 	dpp::component row1;
 	dpp::component menu;
 	menu.set_type(dpp::cot_selectmenu);
 	menu.set_id("panel:" + s.panel_id + ":select");
 	menu.set_placeholder("選擇參與成員 (可複選)");
+
 	size_t max_opts = std::min<size_t>(db_users.size(), 25);
 	std::unordered_set<uint64_t> chosen;
 	for (auto id : s.selected)
 		chosen.insert((uint64_t)id);
+
 	for (size_t i = 0; i < max_opts; ++i) {
 		const auto &u = db_users[i];
 		bool def = chosen.contains((uint64_t)u.id);
@@ -490,18 +434,19 @@ dpp::message command_handler::build_panel_message(const selection_session &s) co
 	row1.add_component(menu);
 	msg.add_component(row1);
 
+	// Row2: only "重新分配" + "結束"
 	dpp::component row2;
 	bool can_assign = (int)s.selected.size() >= s.num_teams;
 	row2.add_component(dpp::component()
 												 .set_type(dpp::cot_button)
 												 .set_style(dpp::cos_primary)
-												 .set_label("分配隊伍")
+												 .set_label("重新分配")
 												 .set_id("panel:" + s.panel_id + ":assign")
 												 .set_disabled(!can_assign));
 	row2.add_component(dpp::component().set_type(dpp::cot_button).set_style(dpp::cos_danger).set_label("結束").set_id("panel:" + s.panel_id + ":end"));
 	msg.add_component(row2);
 
-	// 勝方按鈕（分配後才會出現）
+	// Winner buttons (visible only after teams are generated)
 	if (!s.last_teams.empty()) {
 		dpp::component row;
 		int in_row = 0;
@@ -626,7 +571,7 @@ void command_handler::cmd_recordmatch(const dpp::slashcommand_t &ev)
 		ev.reply(dpp::message("Provide winner indices like `0` or `0,2`").set_flags(dpp::m_ephemeral));
 		return;
 	}
-	std::vector<team> teams; // legacy: 沒有面板資訊時，只紀錄勝者索引
+	std::vector<team> teams;
 	if (auto res = tm_.record_match(std::move(teams), std::move(winners)); !res) {
 		ev.reply(dpp::message("❌ " + res.error().message).set_flags(dpp::m_ephemeral));
 	}

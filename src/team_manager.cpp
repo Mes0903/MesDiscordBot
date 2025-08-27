@@ -7,8 +7,6 @@
 
 namespace terry::bot {
 
-team_manager::team_manager() : rng_(std::random_device{}()) {}
-
 std::expected<ok_t, error> team_manager::load()
 {
 	// users
