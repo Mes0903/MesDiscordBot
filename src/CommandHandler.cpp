@@ -443,38 +443,7 @@ void CommandHandler::handle_button_click(const dpp::button_click_t &event)
 	}
 }
 
-void CommandHandler::handle_select_click(const dpp::select_click_t &event)
-{
-	const std::string &custom_id = event.custom_id;
-
-	if (custom_id.starts_with("user_select_")) {
-		size_t first_underscore = custom_id.find('_', 12);
-		size_t second_underscore = custom_id.find('_', first_underscore + 1);
-
-		if (first_underscore != std::string::npos && second_underscore != std::string::npos) {
-			std::string session_id = custom_id.substr(first_underscore + 1, second_underscore - first_underscore - 1);
-
-			auto *session = selection_manager.get_session(session_id);
-			if (session) {
-				session->update_selection(event.values);
-				event.reply(dpp::ir_update_message, create_selection_message(*session));
-			}
-		}
-	}
-	else if (custom_id.starts_with("select_winner_")) {
-		handle_select_winner_interaction(event);
-	}
-}
-
-void CommandHandler::handle_user_selection_interaction(const dpp::button_click_t &event)
-{
-	event.reply(dpp::ir_channel_message_with_source, dpp::message("此功能已更新，請使用新的選擇界面").set_flags(dpp::m_ephemeral));
-}
-
-void CommandHandler::handle_user_selection_interaction(const dpp::select_click_t &event)
-{
-	event.reply(dpp::ir_channel_message_with_source, dpp::message("此功能已更新，請使用新的選擇界面").set_flags(dpp::m_ephemeral));
-}
+void CommandHandler::handle_select_click(const dpp::select_click_t &event) { handle_select_winner_interaction(event); }
 
 void CommandHandler::handle_toggle_user_interaction(const dpp::button_click_t &event)
 {
@@ -713,41 +682,6 @@ std::optional<std::string> CommandHandler::extract_session_id(const std::string 
 	return custom_id.substr(prefix.length());
 }
 
-dpp::message CommandHandler::create_selection_message(const UserSelectionSession &session)
-{
-	const auto &users = session.get_available_users();
-	const auto &selected_ids = session.get_selected_user_ids();
-
-	dpp::embed embed = dpp::embed()
-												 .set_color(0x0099ff)
-												 .set_title("選擇參加分組的成員")
-												 .set_description("請選擇要參加 " + std::to_string(session.get_num_teams()) + " 組隊伍分配的成員，然後點擊「開始分組」按鈕");
-
-	std::string user_list;
-	int total_power = 0;
-	int selected_power = 0;
-	int selected_count = 0;
-
-	for (const auto &user : users) {
-		bool is_selected = selected_ids.contains(static_cast<uint64_t>(user.discord_id));
-		std::string status_icon = is_selected ? "✅ " : "⬜ ";
-		user_list += status_icon + "<@" + std::to_string(user.discord_id) + "> (" + std::to_string(user.combat_power) + " CP)\n";
-		total_power += user.combat_power;
-		if (is_selected) {
-			selected_power += user.combat_power;
-			selected_count++;
-		}
-	}
-
-	embed.add_field("可選成員 (" + std::to_string(users.size()) + "人)", user_list, false);
-	embed.add_field("已選成員", std::to_string(selected_count) + "人", true);
-	embed.add_field("已選戰力", std::to_string(selected_power), true);
-
-	dpp::message msg;
-	msg.add_embed(embed);
-	return msg;
-}
-
 dpp::message CommandHandler::create_button_selection_message(const UserSelectionSession &session)
 {
 	const auto &users = session.get_available_users();
@@ -972,31 +906,6 @@ dpp::message CommandHandler::create_teams_result_with_selection(const UserSelect
 		msg.add_component(record_row);
 	}
 
-	return msg;
-}
-
-dpp::message CommandHandler::create_teams_result_message(const std::vector<Team> &teams)
-{
-	dpp::embed embed = dpp::embed().set_color(0x00ff00).set_title("生成了 " + std::to_string(teams.size()) + " 組隊伍");
-
-	for (size_t i = 0; i < teams.size(); ++i) {
-		std::string team_info;
-		for (const auto &member : teams[i].members) {
-			team_info += "<@" + std::to_string(static_cast<uint64_t>(member.discord_id)) + "> (" + std::to_string(member.combat_power) + " CP)\n";
-		}
-		team_info += "**總戰力: " + std::to_string(teams[i].total_power) + "**";
-
-		embed.add_field("隊伍 " + std::to_string(i + 1), team_info, true);
-	}
-
-	if (teams.size() >= 2) {
-		auto min_max = std::minmax_element(teams.begin(), teams.end(), [](const Team &a, const Team &b) { return a.total_power < b.total_power; });
-		int power_difference = min_max.second->total_power - min_max.first->total_power;
-		embed.add_field("戰力差", std::to_string(power_difference) + "分", false);
-	}
-
-	dpp::message msg;
-	msg.add_embed(embed);
 	return msg;
 }
 

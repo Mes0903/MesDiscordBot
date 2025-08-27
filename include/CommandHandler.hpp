@@ -147,8 +147,6 @@ private:
 	void handle_help(const dpp::slashcommand_t &event);
 
 	// Component interaction handlers - using correct DPP event type
-	void handle_user_selection_interaction(const dpp::button_click_t &event);
-	void handle_user_selection_interaction(const dpp::select_click_t &event);
 	void handle_toggle_user_interaction(const dpp::button_click_t &event);
 	void handle_create_teams_button_interaction(const dpp::button_click_t &event, const std::string &session_id);
 	void handle_select_all_interaction(const dpp::button_click_t &event, const std::string &session_id);
@@ -162,9 +160,7 @@ private:
 
 	std::optional<std::string> extract_session_id(const std::string &custom_id, const std::string &prefix);
 
-	dpp::message create_selection_message(const UserSelectionSession &session);
 	dpp::message create_button_selection_message(const UserSelectionSession &session);
-	dpp::message create_teams_result_message(const std::vector<Team> &teams);
 	dpp::message create_teams_result_with_selection(const UserSelectionSession &session, const std::vector<Team> &teams);
 
 public:
