@@ -1,8 +1,8 @@
 #include "command_handler.hpp"
 
 #include <algorithm>
+#include <limits>
 #include <random>
-#include <span>
 #include <sstream>
 #include <unordered_set>
 
@@ -33,7 +33,7 @@ void command_handler::on_slash(const dpp::slashcommand_t &ev)
 	if (name == "history")
 		return cmd_history(ev);
 
-	ev.reply(dpp::message("❌ Unknown command").set_flags(dpp::m_ephemeral));
+	reply_err(ev, text::unknown_command);
 }
 
 void command_handler::on_button(const dpp::button_click_t &ev)
@@ -42,7 +42,7 @@ void command_handler::on_button(const dpp::button_click_t &ev)
 
 	// Expect panel actions only
 	if (!starts_with(cid, "panel:")) {
-		ev.reply(dpp::ir_channel_message_with_source, dpp::message("❌ 不支援的按鈕").set_flags(dpp::m_ephemeral));
+		reply_err(ev, text::unsupported_button);
 		return;
 	}
 
@@ -56,25 +56,27 @@ void command_handler::on_button(const dpp::button_click_t &ev)
 
 	auto it = sessions_.find(pid);
 	if (it == sessions_.end()) {
-		ev.reply(dpp::ir_channel_message_with_source, dpp::message("❌ 此面板已失效").set_flags(dpp::m_ephemeral));
+		reply_err(ev, text::panel_expired);
 		return;
 	}
-	auto &sess = it->second;
 
+	auto &sess = it->second;
 	if (!sess.active) {
-		ev.reply(dpp::ir_channel_message_with_source, dpp::message("❌ 此面板已失效").set_flags(dpp::m_ephemeral));
+		reply_err(ev, text::panel_expired);
 		return;
 	}
+
 	if (ev.command.usr.id != sess.owner_id) {
-		ev.reply(dpp::ir_channel_message_with_source, dpp::message("❌ 只有面板擁有者才能操作此面板").set_flags(dpp::m_ephemeral));
+		reply_err(ev, text::panel_owner_only);
 		return;
 	}
 
 	if (action == "assign") {
 		if ((int)sess.selected.size() < sess.num_teams) {
-			ev.reply(dpp::ir_channel_message_with_source, dpp::message("❌ 請至少選擇一名成員加入每個隊伍").set_flags(dpp::m_ephemeral));
+			reply_err(ev, text::need_one_per_team);
 			return;
 		}
+
 		// Re/assign teams using the current selection
 		sess.last_teams = tm_.form_teams(sess.selected, sess.num_teams);
 		ev.reply(dpp::ir_update_message, build_panel_message(sess));
@@ -87,12 +89,14 @@ void command_handler::on_button(const dpp::button_click_t &ev)
 			idx = std::stoi(action.substr(4));
 		} catch (...) {
 		}
+
 		if (idx < 0 || idx >= (int)sess.last_teams.size()) {
-			ev.reply(dpp::ir_channel_message_with_source, dpp::message("❌ 無效的隊伍索引").set_flags(dpp::m_ephemeral));
+			reply_err(ev, text::invalid_team_index);
 			return;
 		}
+
 		if (auto res = tm_.record_match(sess.last_teams, std::vector<int>{idx}); !res) {
-			ev.reply(dpp::ir_channel_message_with_source, dpp::message("❌ " + res.error().message).set_flags(dpp::m_ephemeral));
+			reply_err(ev, res.error().message);
 		}
 		else {
 			if (auto sres = tm_.save(); !sres) { /* ignore */
@@ -114,7 +118,7 @@ void command_handler::on_button(const dpp::button_click_t &ev)
 		return;
 	}
 
-	ev.reply(dpp::ir_channel_message_with_source, dpp::message("❌ 未知的面板操作").set_flags(dpp::m_ephemeral));
+	reply_err(ev, text::unknown_panel_action);
 }
 
 void command_handler::on_select(const dpp::select_click_t &ev)
@@ -122,7 +126,7 @@ void command_handler::on_select(const dpp::select_click_t &ev)
 	const auto &cid = ev.custom_id;
 
 	if (!starts_with(cid, "panel:")) {
-		ev.reply(dpp::ir_channel_message_with_source, dpp::message("❌ 不支援的選項").set_flags(dpp::m_ephemeral));
+		reply_err(ev, text::unsupported_select);
 		return;
 	}
 
@@ -138,17 +142,18 @@ void command_handler::on_select(const dpp::select_click_t &ev)
 
 	auto it = sessions_.find(pid);
 	if (it == sessions_.end()) {
-		ev.reply(dpp::ir_channel_message_with_source, dpp::message("❌ 此面板已失效").set_flags(dpp::m_ephemeral));
+		reply_err(ev, text::panel_expired);
 		return;
 	}
 	auto &sess = it->second;
 
 	if (!sess.active) {
-		ev.reply(dpp::ir_channel_message_with_source, dpp::message("❌ 此面板已失效").set_flags(dpp::m_ephemeral));
+		reply_err(ev, text::panel_expired);
 		return;
 	}
+
 	if (ev.command.usr.id != sess.owner_id) {
-		ev.reply(dpp::ir_channel_message_with_source, dpp::message("❌ 只有面板擁有者才能操作此面板").set_flags(dpp::m_ephemeral));
+		reply_err(ev, text::panel_owner_only);
 		return;
 	}
 
@@ -200,10 +205,10 @@ void command_handler::cmd_help(const dpp::slashcommand_t &ev)
 	// Team formation panel
 	e.add_field("分隊面板",
 							"• `/formteams <teams>` 開啟面板\n"
-							"• 於下拉選單勾選參與者（選單顯示 username）\n"
-							"• 按 **分配** 產生/重抽隊伍\n"
-							"• 按 **隊伍 i 勝** 紀錄勝方\n"
-							"• 按 **結束** 結束面板（面板失效）",
+							"• 於下拉選單勾選參與者\n"
+							"• 按 **「分配」** 按鈕產生/重抽隊伍\n"
+							"• 按 **「隊伍 i 勝」** 按鈕紀錄勝方，其中 i 為隊伍編號\n"
+							"• 按 **「結束」** 按鈕結束面板",
 							false);
 
 	// Records
@@ -279,7 +284,7 @@ void command_handler::cmd_listusers(const dpp::slashcommand_t &ev)
 	}
 
 	if (users.empty()) {
-		ev.reply(dpp::message("❌ 尚無使用者").set_flags(dpp::m_ephemeral));
+		reply_err(ev, text::no_users);
 		return;
 	}
 
@@ -387,7 +392,7 @@ dpp::message command_handler::build_panel_message(const selection_session &s) co
 			row.add_component(dpp::component()
 														.set_type(dpp::cot_button)
 														.set_style(dpp::cos_success)
-														.set_label("隊伍 " + std::to_string(i) + " 勝")
+														.set_label("隊伍 " + std::to_string(i + 1) + " 勝")
 														.set_id("panel:" + s.panel_id + ":win:" + std::to_string(i)));
 			++in_row;
 		}
@@ -403,12 +408,12 @@ void command_handler::cmd_formteams(const dpp::slashcommand_t &ev)
 {
 	int n = static_cast<int>(std::get<int64_t>(ev.get_parameter("teams")));
 	if (n <= 0) {
-		ev.reply(dpp::message("❌ 隊伍數量需大於 0").set_flags(dpp::m_ephemeral));
+		reply_err(ev, text::teams_must_positive);
 		return;
 	}
 	auto all = tm_.list_users(user_sort::by_name_asc);
 	if (all.empty()) {
-		ev.reply(dpp::message("❌ 目前沒有註冊的使用者，請先用 `/adduser` 新增").set_flags(dpp::m_ephemeral));
+		reply_err(ev, text::no_registered_users);
 		return;
 	}
 
@@ -440,7 +445,7 @@ void command_handler::cmd_history(const dpp::slashcommand_t &ev)
 	std::ostringstream os;
 
 	if (recents.empty()) {
-		ev.reply(dpp::message("❌ 尚無對戰紀錄").set_flags(dpp::m_ephemeral));
+		reply_err(ev, text::no_history);
 		return;
 	}
 	else {
@@ -465,8 +470,8 @@ void command_handler::cmd_history(const dpp::slashcommand_t &ev)
 
 			// team lines: prefix trophy for winners, spaces for others
 			std::unordered_set<int> winset(m.winning_teams.begin(), m.winning_teams.end());
-			const std::string TROPHY_PREFIX = "🏆 ";
-			const std::string LOSE_PREFIX = "🥈 ";
+			const std::string TROPHY_PREFIX = std::string(text::trophy);
+			const std::string LOSE_PREFIX = std::string(text::runner_up);
 
 			for (size_t ti = 0; ti < m.teams.size(); ++ti) {
 				const bool is_winner = winset.count(static_cast<int>(ti)) > 0;

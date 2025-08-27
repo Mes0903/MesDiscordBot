@@ -31,7 +31,7 @@ int main()
 		try {
 			ch.on_slash(ev);
 		} catch (const std::exception &e) {
-			ev.reply(dpp::message(std::string{"Error: "} + e.what()).set_flags(dpp::m_ephemeral));
+			reply_err(ev, e.what());
 		}
 	});
 
@@ -39,7 +39,7 @@ int main()
 		try {
 			ch.on_button(ev);
 		} catch (const std::exception &e) {
-			ev.reply(dpp::ir_channel_message_with_source, dpp::message(std::string{"Error: "} + e.what()).set_flags(dpp::m_ephemeral));
+			reply_err(ev, e.what());
 		}
 	});
 
@@ -47,7 +47,7 @@ int main()
 		try {
 			ch.on_select(ev);
 		} catch (const std::exception &e) {
-			ev.reply(dpp::ir_channel_message_with_source, dpp::message(std::string{"Error: "} + e.what()).set_flags(dpp::m_ephemeral));
+			reply_err(ev, e.what());
 		}
 	});
 
@@ -65,5 +65,6 @@ int main()
 	if (auto res = tm.save(); !res) {
 		std::cerr << "Save error: " << res.error().message << "\n";
 	}
+
 	return 0;
 }

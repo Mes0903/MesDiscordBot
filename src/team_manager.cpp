@@ -3,7 +3,6 @@
 
 #include <algorithm>
 #include <fstream>
-#include <iostream>
 #include <unordered_set>
 
 namespace terry::bot {
@@ -117,6 +116,7 @@ std::vector<user> team_manager::list_users(user_sort sort) const
 std::vector<user> team_manager::participants_from_ids(std::span<const user_id> ids) const
 {
 	std::vector<user> res;
+	res.reserve(ids.size());
 	for (auto id : ids) {
 		if (auto it = users_.find(static_cast<uint64_t>(id)); it != users_.end())
 			res.push_back(it->second);

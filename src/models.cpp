@@ -1,14 +1,10 @@
 
 #include "models.hpp"
 
-#include <algorithm>
 #include <iomanip>
 #include <sstream>
 
 namespace terry::bot {
-
-using std::chrono::time_point;
-using sys_clock = std::chrono::system_clock;
 
 json user::to_json() const
 {
