@@ -10,7 +10,10 @@ namespace terry::bot {
 using std::chrono::time_point;
 using sys_clock = std::chrono::system_clock;
 
-json user::to_json() const { return json{{"discord_id", static_cast<uint64_t>(id)}, {"username", username}, {"combat_power", combat_power}}; }
+json user::to_json() const
+{
+	return json{{"discord_id", static_cast<uint64_t>(id)}, {"username", username}, {"combat_power", combat_power}, {"wins", wins}, {"games", games}};
+}
 
 user user::from_json(const json &j)
 {
@@ -18,6 +21,8 @@ user user::from_json(const json &j)
 	u.id = user_id(j.at("discord_id").get<uint64_t>());
 	u.username = j.at("username").get<std::string>();
 	u.combat_power = j.at("combat_power").get<int>();
+	u.wins = j.value("wins", 0);
+	u.games = j.value("games", 0);
 	return u;
 }
 
@@ -36,10 +41,10 @@ json match_record::to_json() const
 	out["teams"] = json::array();
 	for (const auto &t : teams) {
 		json tj;
-		tj["total_power"] = t.total_power;
 		tj["members"] = json::array();
-		for (const auto &m : t.members)
-			tj["members"].push_back(m.to_json());
+		for (const auto &m : t.members) {
+			tj["members"].push_back({{"discord_id", static_cast<uint64_t>(m.id)}});
+		}
 		out["teams"].push_back(std::move(tj));
 	}
 	return out;
@@ -51,11 +56,17 @@ match_record match_record::from_json(const json &j)
 	auto secs = j.at("timestamp").get<int64_t>();
 	mr.when = timestamp{std::chrono::seconds{secs}};
 	mr.winning_teams = j.at("winning_teams").get<std::vector<int>>();
+
+	mr.teams.clear();
 	for (const auto &tj : j.at("teams")) {
 		team t;
-		t.total_power = tj.at("total_power").get<int>();
-		for (const auto &mj : tj.at("members"))
-			t.members.push_back(user::from_json(mj));
+		if (tj.contains("members")) {
+			for (const auto &mj : tj.at("members")) {
+				user u;
+				u.id = user_id{mj.at("discord_id").get<uint64_t>()};
+				t.members.push_back(std::move(u));
+			}
+		}
 		mr.teams.push_back(std::move(t));
 	}
 	return mr;

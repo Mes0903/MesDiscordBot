@@ -15,6 +15,8 @@ struct user {
 	user_id id{};
 	std::string username;
 	int combat_power{}; // >= 0
+	int wins{0};				// persisted in users.json
+	int games{0};				// persisted in users.json
 
 	[[nodiscard]] json to_json() const;
 	[[nodiscard]] static user from_json(const json &);

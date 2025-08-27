@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <fstream>
 #include <iostream>
+#include <unordered_set>
 
 namespace terry::bot {
 
@@ -60,11 +61,13 @@ std::expected<ok_t, error> team_manager::save() const
 }
 
 bool team_manager::has_user(user_id id) const noexcept { return users_.contains(static_cast<uint64_t>(id)); }
+
 const user *team_manager::find_user(user_id id) const noexcept
 {
 	auto it = users_.find(static_cast<uint64_t>(id));
 	return it == users_.end() ? nullptr : &it->second;
 }
+
 user *team_manager::find_user(user_id id) noexcept
 {
 	auto it = users_.find(static_cast<uint64_t>(id));
@@ -171,9 +174,31 @@ std::expected<ok_t, error> team_manager::record_match(std::vector<team> teams, s
 			return std::unexpected(error{"winning team index out of range"});
 		}
 	}
+
+	// update per-user stats if teams are provided
+	if (!teams.empty()) {
+		std::unordered_set<uint64_t> winner_ids;
+		for (int wi : winning_teams) {
+			for (const auto &m : teams[wi].members) {
+				winner_ids.insert(static_cast<uint64_t>(m.id));
+			}
+		}
+		for (const auto &t : teams) {
+			for (const auto &m : t.members) {
+				auto *u = find_user(m.id);
+				if (!u)
+					continue;
+				u->games++;
+				if (winner_ids.count(static_cast<uint64_t>(m.id))) {
+					u->wins++;
+				}
+			}
+		}
+	}
+
 	match_record mr;
 	mr.when = when;
-	mr.teams = std::move(teams);
+	mr.teams = std::move(teams); // persisted as id-only (models.cpp)
 	mr.winning_teams = std::move(winning_teams);
 	history_.push_back(std::move(mr));
 	return ok_t{};

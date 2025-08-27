@@ -16,13 +16,16 @@ dpp::embed users_embed(std::span<const user> users, std::string title)
 	e.set_title(std::move(title));
 	std::ostringstream os;
 	for (const auto &u : users) {
-		os << "<@" << static_cast<uint64_t>(u.id) << "> — **" << u.combat_power << "**\n";
+		int rate = (u.games > 0) ? (u.wins * 100 + u.games / 2) / u.games : 0;
+		os << "<@" << static_cast<uint64_t>(u.id) << "> — **" << u.combat_power << "**"
+			 << " — 勝率 " << rate << "% (" << u.wins << "/" << u.games << ")\n";
 	}
 	if (users.empty())
 		os << "_(no users)_";
 	e.set_description(os.str());
 	return e;
 }
+
 } // namespace
 
 // 分組/歷史顯示用的人名（優先 username，取不到再退回 mention）
@@ -210,24 +213,22 @@ std::vector<dpp::slashcommand> command_handler::commands(dpp::snowflake bot_id)
 {
 	using sc = dpp::slashcommand;
 	std::vector<sc> cmds;
-	cmds.emplace_back("help", "Show help panel", bot_id);
+	cmds.emplace_back("help", "顯示指令清單與說明", bot_id);
 
-	cmds.emplace_back("adduser", "Add (or update) a user with combat power", bot_id)
-			.add_option(dpp::command_option(dpp::co_user, "user", "Discord user", true))
-			.add_option(dpp::command_option(dpp::co_integer, "power", "Combat power (>=0)", true));
+	cmds.emplace_back("adduser", "新增或更新使用者的戰力", bot_id)
+			.add_option(dpp::command_option(dpp::co_user, "user", "Discord 使用者", true))
+			.add_option(dpp::command_option(dpp::co_integer, "power", "戰力 (>=0)", true));
 
-	cmds.emplace_back("removeuser", "Remove a user", bot_id).add_option(dpp::command_option(dpp::co_user, "user", "Discord user", true));
+	cmds.emplace_back("removeuser", "移除使用者", bot_id).add_option(dpp::command_option(dpp::co_user, "user", "Discord 使用者", true));
 
-	cmds.emplace_back("setpower", "Update a user's combat power", bot_id)
-			.add_option(dpp::command_option(dpp::co_user, "user", "Discord user", true))
-			.add_option(dpp::command_option(dpp::co_integer, "power", "Combat power (>=0)", true));
+	cmds.emplace_back("setpower", "更新使用者的戰力", bot_id)
+			.add_option(dpp::command_option(dpp::co_user, "user", "Discord 使用者", true))
+			.add_option(dpp::command_option(dpp::co_integer, "power", "戰力 (>=0)", true));
 
-	cmds.emplace_back("listusers", "List registered users", bot_id);
+	cmds.emplace_back("listusers", "顯示已註冊的使用者", bot_id);
 
-	// 開啟互動面板：參與者用選單選、按鈕分配
-	cmds.emplace_back("formteams", "Open team formation panel", bot_id).add_option(dpp::command_option(dpp::co_integer, "teams", "Number of teams", true));
+	cmds.emplace_back("formteams", "分配隊伍", bot_id).add_option(dpp::command_option(dpp::co_integer, "teams", "隊伍數量", true));
 
-	// 保留 legacy（不走面板）
 	cmds.emplace_back("recordmatch", "Record a match result by winner indices", bot_id)
 			.add_option(dpp::command_option(dpp::co_string, "winners", "Comma-separated winner indices, e.g. 0 or 0,2", true));
 
@@ -391,12 +392,20 @@ dpp::message command_handler::build_panel_message(const selection_session &s) co
 		body << "_Select participants in the menu below._\n";
 	}
 
-	// Team result: one line per team, tags only (no power lines per member)
 	if (!s.last_teams.empty()) {
+		int minp = std::numeric_limits<int>::max();
+		int maxp = std::numeric_limits<int>::min();
+
+		for (const auto &t : s.last_teams) {
+			minp = std::min(minp, t.total_power);
+			maxp = std::max(maxp, t.total_power);
+		}
+
 		for (size_t i = 0; i < s.last_teams.size(); ++i) {
-			body << "隊伍" << (i + 1) << "：";
+			const auto &team = s.last_teams[i];
+			body << "隊伍" << (i + 1) << "（總戰力 " << team.total_power << " CP）：";
 			bool first = true;
-			for (const auto &m : s.last_teams[i].members) {
+			for (const auto &m : team.members) {
 				if (!first)
 					body << "、";
 				body << "<@" << static_cast<uint64_t>(m.id) << ">";
@@ -404,7 +413,9 @@ dpp::message command_handler::build_panel_message(const selection_session &s) co
 			}
 			body << "\n";
 		}
+		body << "最大戰力差：" << (maxp - minp) << " CP\n";
 	}
+
 	e.set_description(body.str());
 	msg.add_embed(e);
 
@@ -434,13 +445,12 @@ dpp::message command_handler::build_panel_message(const selection_session &s) co
 	row1.add_component(menu);
 	msg.add_component(row1);
 
-	// Row2: only "重新分配" + "結束"
 	dpp::component row2;
 	bool can_assign = (int)s.selected.size() >= s.num_teams;
 	row2.add_component(dpp::component()
 												 .set_type(dpp::cot_button)
 												 .set_style(dpp::cos_primary)
-												 .set_label("重新分配")
+												 .set_label("分配")
 												 .set_id("panel:" + s.panel_id + ":assign")
 												 .set_disabled(!can_assign));
 	row2.add_component(dpp::component().set_type(dpp::cot_button).set_style(dpp::cos_danger).set_label("結束").set_id("panel:" + s.panel_id + ":end"));
@@ -497,8 +507,6 @@ void command_handler::cmd_formteams(const dpp::slashcommand_t &ev)
 	ev.reply(msg);
 }
 
-// ---------- HISTORY & LEGACY ----------
-
 void command_handler::cmd_history(const dpp::slashcommand_t &ev)
 {
 	int count = 5;
@@ -513,31 +521,38 @@ void command_handler::cmd_history(const dpp::slashcommand_t &ev)
 	std::ostringstream os;
 
 	if (recents.empty()) {
-		os << "_(no matches yet)_";
+		os << "_(尚未完成配對)_";
 	}
 	else {
 		int idx = 1;
 		for (const auto &m : recents) {
-			// 比賽標題（哪隊獲勝）
+			// title line (winner summary)
 			std::string winners;
 			if (!m.winning_teams.empty()) {
+				winners += "勝利隊伍：";
 				for (size_t i = 0; i < m.winning_teams.size(); ++i) {
 					if (i)
 						winners += "、";
-					winners += "隊伍" + std::to_string(m.winning_teams[i]);
+					winners += "隊伍 " + std::to_string(m.winning_teams[i] + 1);
 				}
-				winners += " 勝";
 			}
 			else {
 				winners = "未紀錄勝方";
 			}
 
-			os << "比賽 #" << idx++ << "（" << winners << "）\n";
+			os << "**比賽 #" << idx++ << "（" << winners << "）**\n";
 			os << format_timestamp(m.when) << "\n";
 
-			// 隊伍：只列 tag，用頓號「、」分隔
+			// team lines: prefix trophy for winners, spaces for others (aligned visually)
+			std::unordered_set<int> winset(m.winning_teams.begin(), m.winning_teams.end());
+			const std::string TROPHY_PREFIX = "🏆 "; // U+1F3C6 TROPHY + space
+			const std::string LOSE_PREFIX = "🥈 ";
+
 			for (size_t ti = 0; ti < m.teams.size(); ++ti) {
-				os << "隊伍" << ti << "：";
+				const bool is_winner = winset.count(static_cast<int>(ti)) > 0;
+				const std::string &prefix = is_winner ? TROPHY_PREFIX : LOSE_PREFIX;
+
+				os << prefix << "隊伍 " << (ti + 1) << "：";
 				bool first = true;
 				for (const auto &mem : m.teams[ti].members) {
 					if (!first)
@@ -547,6 +562,7 @@ void command_handler::cmd_history(const dpp::slashcommand_t &ev)
 				}
 				os << "\n";
 			}
+
 			os << "\n";
 		}
 	}
