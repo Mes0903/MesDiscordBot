@@ -38,17 +38,15 @@ private:
 	std::unordered_map<std::string, selection_session> sessions_; // key: panel_id
 
 	// Resolve a user's friendly name within the guild
-	[[nodiscard]] std::string display_name(user_id uid, dpp::snowflake guild) const;
+	[[nodiscard]] std::string display_name(user_id uid, dpp::snowflake guild) const; // unused
 
 	// commands
 	void cmd_help(const dpp::slashcommand_t &ev);
 	void cmd_adduser(const dpp::slashcommand_t &ev);
 	void cmd_removeuser(const dpp::slashcommand_t &ev);
-	void cmd_setpower(const dpp::slashcommand_t &ev);
 	void cmd_listusers(const dpp::slashcommand_t &ev);
 	void cmd_formteams(const dpp::slashcommand_t &ev);
 	void cmd_history(const dpp::slashcommand_t &ev);
-	void cmd_recordmatch(const dpp::slashcommand_t &ev);
 
 	// helpers (ui/panel)
 	static std::string make_token();

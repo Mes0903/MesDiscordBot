@@ -20,7 +20,7 @@ std::expected<ok_t, error> team_manager::load()
 				users_.emplace(static_cast<uint64_t>(u.id), std::move(u));
 			}
 		} catch (const std::exception &e) {
-			return std::unexpected(error{std::string{"Failed to load users: "} + e.what()});
+			return std::unexpected(error{std::string{"載入使用者失敗："} + e.what()});
 		}
 	}
 	// matches
@@ -31,7 +31,7 @@ std::expected<ok_t, error> team_manager::load()
 			for (const auto &mj : arr)
 				history_.push_back(match_record::from_json(mj));
 		} catch (const std::exception &e) {
-			return std::unexpected(error{std::string{"Failed to load matches: "} + e.what()});
+			return std::unexpected(error{std::string{"載入對戰紀錄失敗："} + e.what()});
 		}
 	}
 	return ok_t{};
@@ -55,7 +55,7 @@ std::expected<ok_t, error> team_manager::save() const
 			mf << arr.dump(2);
 		}
 	} catch (const std::exception &e) {
-		return std::unexpected(error{std::string{"Failed to save: "} + e.what()});
+		return std::unexpected(error{std::string{"儲存失敗："} + e.what()});
 	}
 	return ok_t{};
 }
@@ -77,7 +77,7 @@ user *team_manager::find_user(user_id id) noexcept
 std::expected<ok_t, error> team_manager::upsert_user(user_id id, std::string username, int combat_power)
 {
 	if (combat_power < 0)
-		return std::unexpected(error{"combat power must be >= 0"});
+		return std::unexpected(error{"戰力必須 >= 0"});
 	auto &u = users_[static_cast<uint64_t>(id)];
 	u.id = id;
 	u.username = std::move(username);
@@ -89,7 +89,7 @@ std::expected<ok_t, error> team_manager::remove_user(user_id id)
 {
 	auto it = users_.find(static_cast<uint64_t>(id));
 	if (it == users_.end())
-		return std::unexpected(error{"user not found"});
+		return std::unexpected(error{"該使用者不存在"});
 	users_.erase(it);
 	return ok_t{};
 }
@@ -171,7 +171,7 @@ std::expected<ok_t, error> team_manager::record_match(std::vector<team> teams, s
 	// validate winners
 	for (int w : winning_teams) {
 		if (w < 0 || w >= static_cast<int>(teams.size())) {
-			return std::unexpected(error{"winning team index out of range"});
+			return std::unexpected(error{"無效的勝方隊伍索引"});
 		}
 	}
 

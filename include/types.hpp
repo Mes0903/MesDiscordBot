@@ -19,6 +19,7 @@ using timestamp = std::chrono::sys_seconds;
 struct error {
 	std::string message;
 };
+
 using ok_t = std::monostate;
 
 } // namespace terry::bot
