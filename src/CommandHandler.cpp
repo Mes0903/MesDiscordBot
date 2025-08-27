@@ -56,11 +56,27 @@ void CommandHandler::handle_add_user(const dpp::slashcommand_t &event)
 
 		team_manager.add_user(user_id, username, combat_power);
 
+		// Get updated user list
+		auto all_users = team_manager.get_all_users();
+		int total_power = 0;
+		for (const auto &user : all_users) {
+			total_power += user.combat_power;
+		}
+
 		dpp::embed embed = dpp::embed()
 													 .set_color(0x00ff00)
-													 .set_title("新增使用者")
-													 .add_field("使用者", "<@" + std::to_string(user_id) + ">", true)
-													 .add_field("戰力", std::to_string(combat_power), true);
+													 .set_title("新增使用者成功")
+													 .add_field("新增的使用者", "<@" + std::to_string(user_id) + "> (" + std::to_string(combat_power) + " CP)", false);
+
+		// Add current user list
+		std::string user_list;
+		for (const auto &user : all_users) {
+			user_list += "<@" + std::to_string(user.discord_id) + "> (" + std::to_string(user.combat_power) + " CP)\n";
+		}
+
+		embed.add_field("目前所有成員 (" + std::to_string(all_users.size()) + "人)", user_list, false);
+		embed.add_field("總戰力", std::to_string(total_power), true);
+		embed.add_field("平均戰力", std::to_string(all_users.empty() ? 0 : total_power / static_cast<int>(all_users.size())), true);
 
 		event.reply(dpp::message().add_embed(embed));
 	}
@@ -77,7 +93,29 @@ void CommandHandler::handle_remove_user(const dpp::slashcommand_t &event)
 		dpp::snowflake user_id = std::get<dpp::snowflake>(user_option);
 
 		if (team_manager.remove_user(user_id)) {
-			dpp::embed embed = dpp::embed().set_color(0xff0000).set_title("使用者已移除").add_field("使用者", "<@" + std::to_string(user_id) + ">", true);
+			// Get updated user list
+			auto all_users = team_manager.get_all_users();
+			int total_power = 0;
+			for (const auto &user : all_users) {
+				total_power += user.combat_power;
+			}
+
+			dpp::embed embed = dpp::embed().set_color(0xff0000).set_title("移除使用者成功").add_field("已移除的使用者", "<@" + std::to_string(user_id) + ">", false);
+
+			if (all_users.empty()) {
+				embed.add_field("目前狀態", "系統中沒有任何使用者", false);
+			}
+			else {
+				// Add current user list
+				std::string user_list;
+				for (const auto &user : all_users) {
+					user_list += "<@" + std::to_string(user.discord_id) + "> (" + std::to_string(user.combat_power) + " CP)\n";
+				}
+
+				embed.add_field("目前所有成員 (" + std::to_string(all_users.size()) + "人)", user_list, false);
+				embed.add_field("總戰力", std::to_string(total_power), true);
+				embed.add_field("平均戰力", std::to_string(total_power / static_cast<int>(all_users.size())), true);
+			}
 
 			event.reply(dpp::message().add_embed(embed));
 		}
@@ -105,12 +143,34 @@ void CommandHandler::handle_update_power(const dpp::slashcommand_t &event)
 			return;
 		}
 
+		// Get the old power for comparison
+		auto *existing_user = team_manager.get_user(user_id);
+		int old_power = existing_user ? existing_user->combat_power : 0;
+
 		if (team_manager.update_combat_power(user_id, new_power)) {
+			// Get updated user list
+			auto all_users = team_manager.get_all_users();
+			int total_power = 0;
+			for (const auto &user : all_users) {
+				total_power += user.combat_power;
+			}
+
 			dpp::embed embed = dpp::embed()
 														 .set_color(0x0099ff)
-														 .set_title("更新戰力分數")
-														 .add_field("使用者", "<@" + std::to_string(user_id) + ">", true)
-														 .add_field("新戰力分數", std::to_string(new_power), true);
+														 .set_title("更新戰力成功")
+														 .add_field("更新的使用者", "<@" + std::to_string(user_id) + ">", true)
+														 .add_field("戰力變化", std::to_string(old_power) + " → " + std::to_string(new_power), true)
+														 .add_field("變化量", (new_power > old_power ? "+" : "") + std::to_string(new_power - old_power), true);
+
+			// Add current user list
+			std::string user_list;
+			for (const auto &user : all_users) {
+				user_list += "<@" + std::to_string(user.discord_id) + "> (" + std::to_string(user.combat_power) + " CP)\n";
+			}
+
+			embed.add_field("目前所有成員 (" + std::to_string(all_users.size()) + "人)", user_list, false);
+			embed.add_field("總戰力", std::to_string(total_power), true);
+			embed.add_field("平均戰力", std::to_string(all_users.empty() ? 0 : total_power / static_cast<int>(all_users.size())), true);
 
 			event.reply(dpp::message().add_embed(embed));
 		}
@@ -208,22 +268,18 @@ void CommandHandler::handle_match_history(const dpp::slashcommand_t &event)
 		for (size_t t = 0; t < match.teams.size(); ++t) {
 			bool is_winner = std::find(match.winning_teams.begin(), match.winning_teams.end(), static_cast<int>(t)) != match.winning_teams.end();
 
-			match_info += "**\n隊伍 " + std::to_string(t + 1);
+			match_info += "• **隊伍 " + std::to_string(t + 1);
 			if (is_winner) {
-				match_info += " 🏆** (獲勝)\n";
+				match_info += " 🏆** (獲勝)：";
 			}
 			else {
-				match_info += "**\n";
+				match_info += "**：";
 			}
 
 			// Add team members
-			match_info += "• ";
 			for (size_t m = 0; m < match.teams[t].members.size(); ++m) {
 				const auto &member = match.teams[t].members[m];
-				match_info += "<@" + std::to_string(static_cast<uint64_t>(member.discord_id)) + ">";
-				if (m < match.teams[t].members.size() - 1) {
-					match_info += "、";
-				}
+				match_info += "<@" + std::to_string(static_cast<uint64_t>(member.discord_id)) + ">" + (m < match.teams[t].members.size() - 1 ? "、" : "\n");
 			}
 		}
 
