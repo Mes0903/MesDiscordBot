@@ -21,7 +21,7 @@ using namespace terry::bot;
 int main()
 {
 	std::string token;
-	if (!(std::ifstream(".bot_token") >> token)) [[unlikely]]{
+	if (!(std::ifstream(".bot_token") >> token)) [[unlikely]] {
 		std::cerr << "Failed to read .bot_token\n";
 		return 1;
 	}
@@ -29,7 +29,7 @@ int main()
 	dpp::cluster bot(token);
 
 	team_manager tm;
-	if (auto res = tm.load(); !res) [[unlikely]]{
+	if (auto res = tm.load(); !res) [[unlikely]] {
 		std::cerr << "Warning: " << res.error().message << "\n";
 	}
 
@@ -62,7 +62,7 @@ int main()
 	bot.on_ready([&](const dpp::ready_t &) {
 		auto cmds = command_handler::commands(bot.me.id);
 		bot.global_bulk_command_create(cmds, [](const auto &cb) {
-			if (cb.is_error()) [[unlikely]]{
+			if (cb.is_error()) [[unlikely]] {
 				std::cerr << "Global command upsert failed: " << cb.get_error().message << "\n";
 			}
 		});
@@ -72,7 +72,7 @@ int main()
 
 	bot.start(dpp::st_wait);
 
-	if (auto res = tm.save(); !res) [[unlikely]]{
+	if (auto res = tm.save(); !res) [[unlikely]] {
 		std::cerr << "Save error: " << res.error().message << "\n";
 	}
 

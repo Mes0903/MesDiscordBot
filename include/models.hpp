@@ -1,8 +1,8 @@
 /**
  * @brief
  * Contains lightweight structs and helpers:
- *   - user          : registered player with combat power and W/L stats
- *   - team          : collection of users with cached total power
+ *   - user          : registered player with point and W/L stats
+ *   - team          : collection of users with cached total point
  *   - match_record  : a persisted game with timestamp, teams, and winners
  * Also exposes JSON (de)serialization and small utilities.
  */
@@ -22,9 +22,9 @@ struct user {
 
 	user_id id{};
 	std::string username;
-	double combat_power{}; // >= 0
-	int wins{};						 // persisted in users.json
-	int games{};					 // persisted in users.json
+	double point{}; // >= 0
+	int wins{};			// persisted in users.json
+	int games{};		// persisted in users.json
 
 	[[nodiscard]] json to_json() const;
 	[[nodiscard]] static user from_json(const json &);
@@ -32,12 +32,12 @@ struct user {
 
 struct team {
 	std::vector<user> members;
-	double total_power{};
+	double total_point{};
 
 	void add_member(const user &u)
 	{
 		members.push_back(u);
-		total_power += u.combat_power;
+		total_point += u.point;
 	}
 };
 

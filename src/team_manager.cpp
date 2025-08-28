@@ -7,8 +7,8 @@
  * 	 - Record matches, update per-user W/L stats, and provide recent history
  * Notes:
  *   - All public functions return std::expected for explicit error handling
- *   - `form_teams` currently balances by total power; you can enforce equal
- *     team sizes by comparing (size, power) when choosing the next team.
+ *   - `form_teams` currently balances by total point; you can enforce equal
+ *     team sizes by comparing (size, point) when choosing the next team.
  */
 
 #include "team_manager.hpp"
@@ -97,16 +97,16 @@ user *team_manager::find_user(user_id id) noexcept
 }
 
 /**
- * @brief Insert or update a user (requires combat_power >= 0).
+ * @brief Insert or update a user (requires point >= 0).
  */
-std::expected<ok_t, error> team_manager::upsert_user(user_id id, std::string username, double combat_power)
+std::expected<ok_t, error> team_manager::upsert_user(user_id id, std::string username, double point)
 {
-	if (combat_power < 0) [[unlikely]]
+	if (point < 0) [[unlikely]]
 		return std::unexpected(error{"分數必須 >= 0"});
 	auto &u = users_[static_cast<uint64_t>(id)];
 	u.id = id;
 	u.username = std::move(username);
-	u.combat_power = combat_power;
+	u.point = point;
 	return ok_t{};
 }
 
@@ -123,17 +123,17 @@ std::expected<ok_t, error> team_manager::remove_user(user_id id)
 }
 
 /**
- * @brief Return a copy of users sorted by power/name.
+ * @brief Return a copy of users sorted by point/name.
  */
 std::vector<user> team_manager::list_users(user_sort sort) const
 {
 	auto v = users_ | std::views::values | std::ranges::to<std::vector>();
 	switch (sort) {
-	case user_sort::by_power_desc:
-		std::ranges::sort(v, std::greater{}, &user::combat_power);
+	case user_sort::by_point_desc:
+		std::ranges::sort(v, std::greater{}, &user::point);
 		break;
-	case user_sort::by_power_asc:
-		std::ranges::sort(v, std::less{}, &user::combat_power);
+	case user_sort::by_point_asc:
+		std::ranges::sort(v, std::less{}, &user::point);
 		break;
 	case user_sort::by_name_asc:
 		std::ranges::sort(v, {}, &user::username);
@@ -143,7 +143,7 @@ std::vector<user> team_manager::list_users(user_sort sort) const
 }
 
 /**
- * @brief Form teams: greedy by lowest total power, then random swaps with tolerance.
+ * @brief Form teams: greedy by lowest total point, then random swaps with tolerance.
  */
 std::expected<std::vector<team>, error> team_manager::form_teams(std::span<const user_id> participant_ids, int num_teams, std::optional<uint64_t> seed) const
 {
@@ -174,14 +174,14 @@ std::expected<std::vector<team>, error> team_manager::form_teams(std::span<const
 
 	// Prepare T empty teams; no capacity limit (uneven allowed).
 	std::vector<team> teams(T);
-	std::vector<double> totals(T, 0.0); // keep running total power per team
+	std::vector<double> totals(T, 0.0); // keep running total point per team
 
-	auto projected_spread = [&](size_t place_idx, double add_power) {
-		// Compute max(total) - min(total) if we assign 'add_power' to team 'place_idx'.
+	auto projected_spread = [&](size_t place_idx, double add_point) {
+		// Compute max(total) - min(total) if we assign 'add_point' to team 'place_idx'.
 		double maxv = -std::numeric_limits<double>::infinity();
 		double minv = std::numeric_limits<double>::infinity();
 		for (size_t j = 0; j < totals.size(); ++j) {
-			const double tj = (j == place_idx) ? (totals[j] + add_power) : totals[j];
+			const double tj = (j == place_idx) ? (totals[j] + add_point) : totals[j];
 			if (tj > maxv)
 				maxv = tj;
 			if (tj < minv)
@@ -190,13 +190,13 @@ std::expected<std::vector<team>, error> team_manager::form_teams(std::span<const
 		return maxv - minv;
 	};
 
-	// Greedy assignment: for each player, put them where the total-power spread is minimized.
+	// Greedy assignment: for each player, put them where the total-point spread is minimized.
 	for (const auto &u : players) {
 		size_t best_i = 0;
 		double best_cost = std::numeric_limits<double>::infinity();
 
 		for (size_t i = 0; i < teams.size(); ++i) {
-			const double cost = projected_spread(i, u.combat_power);
+			const double cost = projected_spread(i, u.point);
 			const bool better = (cost < best_cost) || (cost == best_cost && std::uniform_int_distribution<int>(0, 1)(rng));
 			if (better) {
 				best_cost = cost;
@@ -204,7 +204,7 @@ std::expected<std::vector<team>, error> team_manager::form_teams(std::span<const
 			}
 		}
 		teams[best_i].add_member(u);
-		totals[best_i] += u.combat_power;
+		totals[best_i] += u.point;
 	}
 
 	return teams;
@@ -222,85 +222,156 @@ std::expected<ok_t, error> team_manager::record_match(std::vector<team> teams, s
 		}
 	}
 
-	// update per-user stats and hidden rating if teams are provided
+	// update per-user stats using orthodox Elo (base-10 logistic, scale = 400)
 	if (!teams.empty()) [[likely]] {
-		// Hidden rating adjustment
-		// Denominator floor to avoid INF and huge swings when power is ~0
-		constexpr double kDenomFloor = 1.0;
+		using std::accumulate;
+		using std::pow;
+
+		constexpr double ELO_SCALE = 400.0; // classic Elo scale
 		constexpr double kMinPower = 0.0;
 
-		std::vector<double> team_sum(teams.size()), team_cnt(teams.size());
-		for (size_t i = 0; i < teams.size(); ++i) {
-			double s = 0.0;
-			for (const auto &m : teams[i].members)
-				s += m.combat_power;
-			team_sum[i] = s;
-			team_cnt[i] = static_cast<double>(teams[i].members.size());
+		const std::size_t N = teams.size();
+		std::vector<double> team_sum(N); // sum of member ratings per team
+		// std::vector<std::size_t> team_cnt(N);		// team sizes (for AVG usage)
+		std::vector<double> team_rating(N);			// team rating used by Elo (here we use SUM)
+		std::vector<double> team_delta(N, 0.0); // accumulated team deltas from pairwise matches
+
+		// 1) Aggregate team ratings (choose SUM or AVG; we use SUM here)
+		for (std::size_t i = 0; i < N; ++i) {
+			const auto &members = teams[i].members;
+			// team_cnt[i] = members.size(); // (for AVG usage)
+			team_sum[i] = accumulate(members.begin(), members.end(), 0.0, [](double acc, const user &u) { return acc + u.point; });
+			// SUM: team strength = sum of member ratings (popular team-Elo variant)
+			// Also can apply AVG here: team_rating[i] = (team_cnt[i] ? team_sum[i] / team_cnt[i] : 0.0);
+			team_rating[i] = team_sum[i];
 		}
 
-		// Opponents' size-weighted average for each team
-		std::vector<double> opp_avg(teams.size());
-		const double total_sum = std::accumulate(team_sum.begin(), team_sum.end(), 0.0);
-		const double total_cnt = std::accumulate(team_cnt.begin(), team_cnt.end(), 0.0);
-		for (size_t i = 0; i < teams.size(); ++i) {
-			const double sum_excl = total_sum - team_sum[i];
-			const double cnt_excl = std::max(total_cnt - team_cnt[i], 1.0);
-			opp_avg[i] = sum_excl / cnt_excl;
-		}
-
+		// 2) Actual results S_ij via pairwise decomposition
+		//    - win vs non-winner => 1 / 0
+		//    - winner vs winner  => 0.5 / 0.5   (tie among winners)
+		//    - non-winner vs non-winner => 0.5 / 0.5   (tie among losers)
 		std::unordered_set<int> winset(winning_teams.begin(), winning_teams.end());
 
-		for (size_t ti = 0; ti < teams.size(); ++ti) {
-			const bool winner = winset.contains(static_cast<int>(ti));
-			for (const auto &m : teams[ti].members) {
-				if (auto *u = find_user(m.id)) [[likely]] {
-					const double p_raw = u->combat_power;
-					const double oa = opp_avg[ti];
+		auto expected_vs = [&](double Ra, double Rb) -> double {
+			// E[a beats b] = 1 / (1 + 10^((Rb - Ra)/400))
+			const double exp_term = pow(10.0, (Rb - Ra) / ELO_SCALE);
+			return 1.0 / (1.0 + exp_term);
+		};
 
-					// Stabilized denominators
-					const double p_den = std::max(p_raw, kDenomFloor);
-					const double oa_den = std::max(oa, kDenomFloor);
+		// 3) Accumulate team deltas by pairwise Elo updates
+		//    For each pair (i, j):
+		//      di = K * (S_i - E_i), dj = -di  → zero-sum at pair level
+		for (std::size_t i = 0; i < N; ++i) {
+			for (std::size_t j = i + 1; j < N; ++j) {
+				const double Ei = expected_vs(team_rating[i], team_rating[j]);
+				const double Ej = 1.0 - Ei;
 
-					// Raw delta from your original formula
-					double delta = winner ? (k_factor_ * (oa_den / p_den)) : (-k_factor_ * (p_den / oa_den));
+				// Actual scores for this pair
+				// (i_win && j_win) => tie among winners (0.5/0.5)
+				// (!i_win && !j_win) => tie among losers (0.5/0.5)
+				const bool i_win = winset.contains(static_cast<int>(i));
+				const bool j_win = winset.contains(static_cast<int>(j));
+				double Si = 0.5, Sj = 0.5; // default tie
+				if (i_win && !j_win) {
+					Si = 1.0;
+					Sj = 0.0;
+				}
+				else if (!i_win && j_win) {
+					Si = 0.0;
+					Sj = 1.0;
+				}
 
-					// Hard-cap the absolute change based on opponent strength
-					// cap grows sublinearly with opponent strength (sqrt), scaled by k and a config knob.
-					const double cap = std::max(0.0, delta_cap_scale_ * k_factor_ * std::sqrt(oa_den));
-					if (cap > 0.0) {
-						if (delta > cap)
-							delta = cap;
-						if (delta < -cap)
-							delta = -cap;
+				const double di = k_factor_ * (Si - Ei);
+				const double dj = k_factor_ * (Sj - Ej); // = -di
+
+				team_delta[i] += di;
+				team_delta[j] += dj;
+			}
+		}
+
+		// 4) Distribute each team's delta to its members
+		//    Winners: inverse weighting → higher-rated gain less, lower-rated gain more.
+		//    Losers : direct  weighting → higher-rated lose more, lower-rated lose less.
+		//    We normalize weights so that sum of member deltas equals team_delta[ti].
+		for (std::size_t ti = 0; ti < N; ++ti) {
+			const double Ts = team_sum[ti];
+			const auto &members = teams[ti].members;
+
+			if (members.empty())
+				continue;
+
+			// If the team has zero total rating, fall back to equal split.
+			const bool zero_team = (Ts <= 0.0);
+			const double even_share = 1.0 / static_cast<double>(members.size());
+
+			// Positive team_delta => winners; negative => losers.
+			const double td = team_delta[ti];
+			if (std::abs(td) == 0.0) // nothing to distribute
+				continue;
+
+			// Tunables for intra-team weighting.
+			// - kWeightFloor avoids division blow-ups when rating ≈ 0.
+			// - alpha controls how strong the inverse/direct effect is (0.6 = linear).
+			constexpr double kWeightFloor = 1e-6;
+			constexpr double alpha = 0.6;
+
+			// Build weights and normalize.
+			std::vector<double> weights;
+			weights.reserve(members.size());
+
+			if (zero_team) {
+				// Equal split when team total is zero.
+				for (const auto &m : members) {
+					if (auto *u = find_user(m.id)) {
+						double np = u->point + td * even_share;
+						if (!std::isfinite(np))
+							np = u->point;
+						u->point = std::max(kMinPower, np);
 					}
+				}
+				continue;
+			}
 
-					// Exponential smoothing: only apply a fraction alpha of the delta
-					const double alpha = rating_alpha_; // in [0,1]
-					double np = p_raw + alpha * delta;
+			// Winners: w_i = 1 / (rating^alpha)  → higher rating → smaller weight
+			// Losers : w_i = (rating^alpha)      → higher rating → larger  weight
+			const bool winners = (td > 0.0);
+			double W = 0.0;
+			for (const auto &m : members) {
+				double r = kWeightFloor;
+				if (const auto *u = find_user(m.id))
+					r = std::max(u->point, kWeightFloor);
+				double wi = winners ? std::pow(r, -alpha) : std::pow(r, alpha);
+				weights.push_back(wi);
+				W += wi;
+			}
+			if (W <= 0.0)
+				W = static_cast<double>(members.size()); // safety
 
-					// Safety: avoid NaN/INF and enforce lower bound
+			// Apply normalized shares.
+			for (std::size_t k = 0; k < members.size(); ++k) {
+				const auto &m = members[k];
+				if (auto *u = find_user(m.id)) {
+					const double share = weights[k] / W;
+					double np = u->point + td * share;
 					if (!std::isfinite(np))
-						np = p_raw;
-					u->combat_power = std::max(kMinPower, np);
+						np = u->point;										// safety
+					u->point = std::max(kMinPower, np); // non-negativity
 				}
 			}
 		}
 
-		// W/L stats
+		// Win/Loss counters
 		std::unordered_set<uint64_t> winner_ids;
-		for (int wi : winning_teams) {
-			for (const auto &m : teams[wi].members) {
+		for (int wi : winning_teams)
+			for (const auto &m : teams[wi].members)
 				winner_ids.insert(static_cast<uint64_t>(m.id));
-			}
-		}
+
 		for (const auto &t : teams) {
 			for (const auto &m : t.members) {
-				auto *u = find_user(m.id);
-				if (!u)
-					continue;
-				u->games++;
-				if (winner_ids.contains(static_cast<uint64_t>(m.id))) {
-					u->wins++;
+				if (auto *u = find_user(m.id)) {
+					u->games++;
+					if (winner_ids.contains(static_cast<uint64_t>(m.id)))
+						u->wins++;
 				}
 			}
 		}

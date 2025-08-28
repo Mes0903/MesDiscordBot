@@ -7,8 +7,8 @@
  *   - Record matches, update per-user W/L stats, and provide recent history
  * Notes:
  *   - All public functions return std::expected for explicit error handling
- *   - `form_teams` currently balances by total power; you can enforce equal
- *     team sizes by comparing (size, power) when choosing the next team.
+ *   - `form_teams` currently balances by total point; you can enforce equal
+ *     team sizes by comparing (size, point) when choosing the next team.
  */
 
 #pragma once
@@ -23,7 +23,7 @@
 #include <vector>
 namespace terry::bot {
 
-enum class user_sort { by_power_desc, by_power_asc, by_name_asc };
+enum class user_sort { by_point_desc, by_point_asc, by_name_asc };
 
 /**
  * @class team_manager
@@ -52,7 +52,7 @@ public:
 	 */
 	[[nodiscard]] const user *find_user(user_id id) const noexcept;
 	[[nodiscard]] user *find_user(user_id id) noexcept;
-	[[nodiscard]] std::expected<ok_t, error> upsert_user(user_id id, std::string username, double combat_power);
+	[[nodiscard]] std::expected<ok_t, error> upsert_user(user_id id, std::string username, double point);
 
 	/**
 	 * @brief Remove a user from the registry.
@@ -60,14 +60,14 @@ public:
 	 * @return ok_t on success; error if the user does not exist.
 	 */
 	[[nodiscard]] std::expected<ok_t, error> remove_user(user_id id);
-	[[nodiscard]] std::vector<user> list_users(user_sort sort = user_sort::by_power_desc) const;
+	[[nodiscard]] std::vector<user> list_users(user_sort sort = user_sort::by_point_desc) const;
 
 	/**
 	 * @brief Form balanced teams from participants.
 	 * @param participants Input player set.
 	 * @param team_count Number of teams (>= 2).
 	 * @param rng Random engine for controlled randomization.
-	 * @return Teams with roughly balanced total power; size may be uneven unless caller enforces it.
+	 * @return Teams with roughly balanced total point; size may be uneven unless caller enforces it.
 	 */
 	[[nodiscard]] std::expected<std::vector<team>, error> form_teams(std::span<const user_id> participant_ids, int num_teams = 2,
 																																	 std::optional<uint64_t> seed = std::nullopt) const;
@@ -100,8 +100,6 @@ private:
 
 	// for hidden score
 	double k_factor_{4.0};
-	double delta_cap_scale_{1.0}; // scales the hard cap; cap = delta_cap_scale * k * sqrt(opp_avg)
-	double rating_alpha_{0.5};		// smoothing factor in [0,1], new = old + alpha * delta
 };
 
 } // namespace terry::bot

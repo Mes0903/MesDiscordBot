@@ -1,8 +1,8 @@
 /**
  * @brief
  * Defines basic structures and JSON (de)serialization helpers:
- *	 - user        : registered player with combat power and W/L stats
- *	 - team        : a collection of users with a cached total_power
+ *	 - user        : registered player with point and W/L stats
+ *	 - team        : a collection of users with a cached total_point
  *	 - match_record: stored match with timestamp, teams, and winners
  * Also includes `format_timestamp` used for UI embedding.
  */
@@ -20,7 +20,7 @@ using json = nlohmann::json;
  */
 json user::to_json() const
 {
-	return json{{"discord_id", static_cast<uint64_t>(id)}, {"username", username}, {"combat_power", combat_power}, {"wins", wins}, {"games", games}};
+	return json{{"discord_id", static_cast<uint64_t>(id)}, {"username", username}, {"point", point}, {"wins", wins}, {"games", games}};
 }
 
 /**
@@ -31,7 +31,7 @@ user user::from_json(const json &j)
 	user u;
 	u.id = user_id(j.at("discord_id").get<uint64_t>());
 	u.username = j.at("username").get<std::string>();
-	u.combat_power = j.at("combat_power").get<double>();
+	u.point = j.at("point").get<double>();
 	u.wins = j.value("wins", 0);
 	u.games = j.value("games", 0);
 	return u;

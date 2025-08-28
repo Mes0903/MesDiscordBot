@@ -172,20 +172,20 @@ void command_handler::on_button(const dpp::button_click_t &ev)
 				ev.reply(dpp::message("❌ " + sres.error().message).set_flags(dpp::m_ephemeral));
 			}
 
-			// sync new powers into panel snapshot
+			// sync new points into panel snapshot
 			for (auto &t : sess.last_teams) {
 				for (auto &m : t.members) {
 					if (const auto *u = tm_.find_user(m.id)) [[likely]] {
 						// Sync display fields from the latest registry values
 						m.username = u->username;
-						m.combat_power = u->combat_power;
+						m.point = u->point;
 					}
 				}
 
-				// recompute team's `total_power`
-				t.total_power = 0.0;
+				// recompute team's `total_point`
+				t.total_point = 0.0;
 				for (const auto &m : t.members)
-					t.total_power += m.combat_power;
+					t.total_point += m.point;
 			}
 
 			auto m = build_formteams_panel_msg(sess);
@@ -285,7 +285,7 @@ std::vector<dpp::slashcommand> command_handler::commands(dpp::snowflake bot_id)
 	cmds.emplace_back("help", "顯示指令清單與說明", bot_id);
 	cmds.emplace_back("adduser", "新增或更新使用者的分數", bot_id)
 			.add_option(dpp::command_option(dpp::co_user, "user", "Discord 使用者", true))
-			.add_option(dpp::command_option(dpp::co_number, "power", "分數 (>=0.0)", true));
+			.add_option(dpp::command_option(dpp::co_number, "point", "分數 (>=0.0)", true));
 	cmds.emplace_back("removeuser", "移除使用者", bot_id).add_option(dpp::command_option(dpp::co_user, "user", "Discord 使用者", true));
 	cmds.emplace_back("listusers", "顯示已註冊的使用者", bot_id);
 	cmds.emplace_back("formteams", "分配隊伍", bot_id).add_option(dpp::command_option(dpp::co_integer, "teams", "隊伍數量（預設 2）", false));
@@ -304,7 +304,7 @@ void command_handler::cmd_help(const dpp::slashcommand_t &ev)
 
 	// User management
 	e.add_field("使用者管理",
-							"• `/adduser <user> <power>` 新增或更新成員分數\n"
+							"• `/adduser <user> <point>` 新增或更新成員分數\n"
 							"• `/removeuser <user>` 移除成員\n"
 							"• `/listusers` 顯示使用者清單",
 							false);
@@ -325,14 +325,14 @@ void command_handler::cmd_help(const dpp::slashcommand_t &ev)
 }
 
 /**
- * @brief Add or update a user's combat power.
+ * @brief Add or update a user's point.
  * 			  We also try to capture a snapshot of the username/global_name for display.
  * 			  Persist the change to disk via team_manager::save().
  */
 void command_handler::cmd_adduser(const dpp::slashcommand_t &ev)
 {
 	dpp::snowflake uid = std::get<dpp::snowflake>(ev.get_parameter("user"));
-	double power = std::get<double>(ev.get_parameter("power"));
+	double point = std::get<double>(ev.get_parameter("point"));
 
 	// try to get the user name from the slash command
 	std::string username_snapshot;
@@ -363,7 +363,7 @@ void command_handler::cmd_adduser(const dpp::slashcommand_t &ev)
 	}
 
 	// update/insert the user data
-	if (auto res = tm_.upsert_user(uid, username_snapshot, power); !res) [[unlikely]] {
+	if (auto res = tm_.upsert_user(uid, username_snapshot, point); !res) [[unlikely]] {
 		ev.reply(dpp::message("❌ " + res.error().message).set_flags(dpp::m_ephemeral));
 		return;
 	}
@@ -373,7 +373,7 @@ void command_handler::cmd_adduser(const dpp::slashcommand_t &ev)
 		ev.reply(dpp::message("❌ " + sres.error().message).set_flags(dpp::m_ephemeral));
 	}
 
-	ev.reply(dpp::message("✅ 新增/更新使用者 <@" + std::to_string((uint64_t)uid) + "> 的分數為 " + std::format("{:.3f}", power)));
+	ev.reply(dpp::message("✅ 新增/更新使用者 <@" + std::to_string((uint64_t)uid) + "> 的分數為 " + std::format("{:.3f}", point)));
 }
 
 /**
@@ -394,7 +394,7 @@ void command_handler::cmd_removeuser(const dpp::slashcommand_t &ev)
 }
 
 /**
- * @brief List all registered users sorted by combat power (descending).
+ * @brief List all registered users sorted by point (descending).
  * 				Shows a simple win-rate summary when available.
  */
 void command_handler::cmd_listusers(const dpp::slashcommand_t &ev)
@@ -403,10 +403,10 @@ void command_handler::cmd_listusers(const dpp::slashcommand_t &ev)
 	e.set_title("使用者清單");
 
 	std::string desc;
-	auto users = tm_.list_users(user_sort::by_power_desc);
+	auto users = tm_.list_users(user_sort::by_point_desc);
 	for (const auto &u : users) {
 		const int rate = (u.games > 0) ? (u.wins * 100 + u.games / 2) / u.games : 0;
-		std::format_to(std::back_inserter(desc), "<@{}> **({:.3f} CP)** — 勝率 {}% ({}/{})\n", static_cast<uint64_t>(u.id), u.combat_power, rate, u.wins, u.games);
+		std::format_to(std::back_inserter(desc), "<@{}> **({:.3f} CP)** — 勝率 {}% ({}/{})\n", static_cast<uint64_t>(u.id), u.point, rate, u.wins, u.games);
 	}
 
 	if (users.empty()) [[unlikely]] {
@@ -566,13 +566,13 @@ dpp::message command_handler::build_formteams_panel_msg(const panel_session &ses
 	}
 
 	if (!sess.last_teams.empty()) [[likely]] {
-		const auto [min_it, max_it] = std::ranges::minmax_element(sess.last_teams, {}, &team::total_power);
-		const double minp = (min_it != sess.last_teams.end()) ? min_it->total_power : 0.0; // verify whether the iterator is valid, if not, default to 0.0
-		const double maxp = (max_it != sess.last_teams.end()) ? max_it->total_power : 0.0; // verify whether the iterator is valid, if not, default to 0.0
+		const auto [min_it, max_it] = std::ranges::minmax_element(sess.last_teams, {}, &team::total_point);
+		const double minp = (min_it != sess.last_teams.end()) ? min_it->total_point : 0.0; // verify whether the iterator is valid, if not, default to 0.0
+		const double maxp = (max_it != sess.last_teams.end()) ? max_it->total_point : 0.0; // verify whether the iterator is valid, if not, default to 0.0
 
 		for (size_t i = 0; i < sess.last_teams.size(); ++i) {
 			const auto &team = sess.last_teams[i];
-			std::format_to(std::back_inserter(body), "隊伍 {}（總分數 {:.3f} CP）：", i + 1, team.total_power);
+			std::format_to(std::back_inserter(body), "隊伍 {}（總分數 {:.3f} CP）：", i + 1, team.total_point);
 			bool first = true;
 			for (const auto &m : team.members) {
 				if (!first)
@@ -604,7 +604,7 @@ dpp::message command_handler::build_formteams_panel_msg(const panel_session &ses
 		const auto &u = db_users[i];
 		bool def = chosen.contains((uint64_t)u.id);
 		std::string label = u.username.empty() ? ("<@" + std::to_string((uint64_t)u.id) + ">") : u.username;
-		dpp::select_option opt(label + " (" + std::format("{:.3f}", u.combat_power) + ")", std::to_string((uint64_t)u.id));
+		dpp::select_option opt(label + " (" + std::format("{:.3f}", u.point) + ")", std::to_string((uint64_t)u.id));
 		if (def)
 			opt.set_default(true);
 
