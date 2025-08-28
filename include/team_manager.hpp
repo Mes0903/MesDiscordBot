@@ -75,7 +75,7 @@ public:
 	/**
 	 * @brief Record a finished match and update per-user W/L statistics.
 	 * @param teams Teams that participated.
-	 * @param winners Optional indices of winning teams (when known).
+	 * @param winning_teams Optional indices of winning teams, to accept multiple winner, it was an vector of team index.
 	 * @return ok_t on success; error on validation failure.
 	 */
 	[[nodiscard]] std::expected<ok_t, error> record_match(std::vector<team> teams, std::vector<int> winning_teams,

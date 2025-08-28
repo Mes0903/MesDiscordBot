@@ -31,7 +31,7 @@ std::expected<ok_t, error> team_manager::load()
 {
 	// users
 	if (std::ifstream uf{USERS_FILE}) {
-		try {
+		try { // the try block is for nlohmann::json
 			json arr;
 			uf >> arr;
 			for (const auto &uj : arr) {
@@ -45,7 +45,7 @@ std::expected<ok_t, error> team_manager::load()
 
 	// matches
 	if (std::ifstream mf{MATCHES_FILE}) {
-		try {
+		try { // the try block is for nlohmann::json
 			json arr;
 			mf >> arr;
 			for (const auto &mj : arr)
@@ -62,7 +62,7 @@ std::expected<ok_t, error> team_manager::load()
  */
 std::expected<ok_t, error> team_manager::save() const
 {
-	try {
+	try { // the try block is for nlohmann::json
 		// users
 		if (std::ofstream uf{USERS_FILE}) {
 			json arr = json::array();
@@ -79,7 +79,7 @@ std::expected<ok_t, error> team_manager::save() const
 			mf << arr.dump(2);
 		}
 	} catch (const std::exception &e) {
-		return std::unexpected(error{std::string{"儲存失敗："} + e.what()});
+		return std::unexpected(error{std::string{"json 存檔失敗，請截圖回報給開發者："} + e.what()});
 	}
 	return ok_t{};
 }
@@ -101,8 +101,8 @@ user *team_manager::find_user(user_id id) noexcept
  */
 std::expected<ok_t, error> team_manager::upsert_user(user_id id, std::string username, double combat_power)
 {
-	if (combat_power < 0)
-		return std::unexpected(error{"戰力必須 >= 0"});
+	if (combat_power < 0) [[unlikely]]
+		return std::unexpected(error{"分數必須 >= 0"});
 	auto &u = users_[static_cast<uint64_t>(id)];
 	u.id = id;
 	u.username = std::move(username);
@@ -116,7 +116,7 @@ std::expected<ok_t, error> team_manager::upsert_user(user_id id, std::string use
 std::expected<ok_t, error> team_manager::remove_user(user_id id)
 {
 	auto it = users_.find(static_cast<uint64_t>(id));
-	if (it == users_.end())
+	if (it == users_.end()) [[unlikely]]
 		return std::unexpected(error{"該使用者不存在"});
 	users_.erase(it);
 	return ok_t{};
@@ -148,7 +148,7 @@ std::vector<user> team_manager::list_users(user_sort sort) const
 std::expected<std::vector<team>, error> team_manager::form_teams(std::span<const user_id> participant_ids, int num_teams, std::optional<uint64_t> seed) const
 {
 	// Allow uneven team sizes; only require at least one member per team.
-	if (num_teams < 1)
+	if (num_teams < 1) [[unlikely]]
 		return std::unexpected(error{"隊伍數須為正整數"});
 
 	// Gather current user snapshots.
@@ -163,9 +163,9 @@ std::expected<std::vector<team>, error> team_manager::form_teams(std::span<const
 	const int T = num_teams;
 
 	// Infeasible if fewer participants than teams.
-	if (P == 0)
+	if (P == 0) [[unlikely]]
 		return std::unexpected(error{"沒有參與者"});
-	if (T > P)
+	if (T > P) [[unlikely]]
 		return std::unexpected(error{"隊伍數大於參與者數"});
 
 	// Randomize input order to keep results varied run-to-run.
@@ -217,13 +217,13 @@ std::expected<ok_t, error> team_manager::record_match(std::vector<team> teams, s
 {
 	// validate winners
 	for (int w : winning_teams) {
-		if (w < 0 || w >= static_cast<int>(teams.size())) {
+		if (w < 0 || w >= static_cast<int>(teams.size())) [[unlikely]] {
 			return std::unexpected(error{"無效的勝方隊伍索引"});
 		}
 	}
 
 	// update per-user stats and hidden rating if teams are provided
-	if (!teams.empty()) {
+	if (!teams.empty()) [[likely]] {
 		// Hidden rating adjustment
 		// Denominator floor to avoid INF and huge swings when power is ~0
 		constexpr double kDenomFloor = 1.0;
@@ -253,7 +253,7 @@ std::expected<ok_t, error> team_manager::record_match(std::vector<team> teams, s
 		for (size_t ti = 0; ti < teams.size(); ++ti) {
 			const bool winner = winset.contains(static_cast<int>(ti));
 			for (const auto &m : teams[ti].members) {
-				if (auto *u = find_user(m.id)) {
+				if (auto *u = find_user(m.id)) [[likely]] {
 					const double p_raw = u->combat_power;
 					const double oa = opp_avg[ti];
 
@@ -319,7 +319,7 @@ std::expected<ok_t, error> team_manager::record_match(std::vector<team> teams, s
  */
 std::vector<match_record> team_manager::recent_matches(int count) const
 {
-	if (count <= 0)
+	if (count <= 0) [[unlikely]]
 		return {};
 	return history_ | std::views::reverse | std::views::take(static_cast<size_t>(count)) | std::ranges::to<std::vector>();
 }

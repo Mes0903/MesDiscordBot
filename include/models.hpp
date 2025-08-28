@@ -39,7 +39,6 @@ struct team {
 		members.push_back(u);
 		total_power += u.combat_power;
 	}
-	void recalc_total_power();
 };
 
 struct match_record {

@@ -28,7 +28,7 @@ inline constexpr std::string_view unsupported_button = "不支援的按鈕";
 inline constexpr std::string_view unsupported_select = "不支援的選項";
 inline constexpr std::string_view panel_expired = "此面板已失效";
 inline constexpr std::string_view panel_owner_only = "只有面板擁有者才能操作此面板";
-inline constexpr std::string_view need_one_per_team = "請至少選擇一名成員加入每個隊伍";
+inline constexpr std::string_view need_one_per_team = "請至少選擇一名成員";
 inline constexpr std::string_view invalid_team_index = "無效的隊伍索引";
 inline constexpr std::string_view unknown_panel_action = "未知的面板操作";
 inline constexpr std::string_view teams_must_positive = "隊伍數量需大於 0";
@@ -55,11 +55,11 @@ inline void reply_err(const dpp::select_click_t &ev, std::string_view s) { ev.re
 class command_handler {
 public:
 	/**
-	 * @struct selection_session
+	 * @struct panel_session
 	 * @brief Tracks the state for an interactive assignment panel.
-	 * @note Invalidated once the owner presses "End".
+	 * @note Invalidated when the owner presses "End", or upon expiry.
 	 */
-	struct selection_session {
+	struct panel_session {
 		std::string panel_id;
 		dpp::snowflake guild_id{};
 		dpp::snowflake channel_id{};
@@ -68,6 +68,7 @@ public:
 		std::vector<user_id> selected;
 		std::vector<team> last_teams;
 		bool active{true};
+		std::chrono::steady_clock::time_point expires_at{};
 	};
 
 	/**
@@ -90,7 +91,8 @@ public:
 
 private:
 	team_manager &tm_;
-	std::unordered_map<std::string, selection_session> sessions_; // key: panel_id
+	std::unordered_map<std::string, panel_session, std::hash<std::string_view>, std::equal_to<>> sessions_;
+	void purge_expired_sessions();
 
 	// helpers (ui/panel)
 	static std::string make_token();
@@ -105,8 +107,7 @@ private:
 	void cmd_history(const dpp::slashcommand_t &ev);
 
 	/** @brief Build the interactive assignment panel message for a given session. */
-	[[nodiscard]] dpp::message build_panel_message(const selection_session &s) const;
-	void refresh_session_snapshot(selection_session &s) const;
+	[[nodiscard]] dpp::message build_formteams_panel_msg(const panel_session &s) const;
 };
 
 } // namespace terry::bot

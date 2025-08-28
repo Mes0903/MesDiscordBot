@@ -38,16 +38,6 @@ user user::from_json(const json &j)
 }
 
 /**
- * @brief Recompute team's `total_power` by summing member combat power.
- */
-void team::recalc_total_power()
-{
-	total_power = 0.0;
-	for (const auto &m : members)
-		total_power += m.combat_power;
-}
-
-/**
  * @brief Serialize a match record (timestamp seconds, winners, and team member IDs only).
  */
 json match_record::to_json() const
@@ -80,7 +70,7 @@ match_record match_record::from_json(const json &j)
 	mr.teams.clear();
 	for (const auto &tj : j.at("teams")) {
 		team t;
-		if (tj.contains("members")) {
+		if (tj.contains("members")) [[likely]] {
 			for (const auto &mj : tj.at("members")) {
 				user u;
 				u.id = user_id{mj.at("discord_id").get<uint64_t>()};
