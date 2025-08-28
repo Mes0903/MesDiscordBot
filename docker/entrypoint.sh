@@ -19,4 +19,4 @@ fi
 [[ -f matches.json ]] || printf '[]' > matches.json
 
 # Run
-exec /workspace/build/bin/terry_aoe2_dcbot
+exec stdbuf -oL -eL /workspace/build/bin/terry_aoe2_dcbot
