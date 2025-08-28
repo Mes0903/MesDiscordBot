@@ -188,7 +188,7 @@ void command_handler::on_button(const dpp::button_click_t &ev)
 
 			auto m = build_formteams_panel_msg(sess);
 			// Show which team won and the K-factor used after rating updates.
-			m.set_content("✅ 已記錄勝利隊伍：隊伍 " + std::to_string(idx + 1) + "，並更新了分數（K = " + std::format("{:.3f}", tm_.get_k_factor()) + "）");
+			m.set_content("✅ 已記錄勝利隊伍：隊伍 " + std::to_string(idx + 1));
 			ev.reply(dpp::ir_update_message, m);
 		}
 		return;

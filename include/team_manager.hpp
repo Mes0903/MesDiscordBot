@@ -87,18 +87,12 @@ public:
 	 */
 	[[nodiscard]] std::vector<match_record> recent_matches(int count) const;
 
-	// for hidden score
-	double get_k_factor() const noexcept { return k_factor_; }
-
 private:
 	std::unordered_map<uint64_t, user> users_;
 	std::vector<match_record> history_;
 
 	static constexpr const char *USERS_FILE = "users.json";
 	static constexpr const char *MATCHES_FILE = "matches.json";
-
-	// for hidden score
-	double k_factor_{4.0};
 };
 
 } // namespace terry::bot

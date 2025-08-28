@@ -376,6 +376,7 @@ std::expected<ok_t, error> team_manager::record_match(std::vector<team> teams, s
 
 		constexpr double ELO_SCALE = 400.0; // classic Elo scale
 		constexpr double kMinPower = 0.0;
+		constexpr double k_factor = 4.0;
 
 		const std::size_t N = teams.size();
 		std::vector<double> team_sum(N); // sum of member ratings per team
@@ -428,8 +429,8 @@ std::expected<ok_t, error> team_manager::record_match(std::vector<team> teams, s
 					Sj = 1.0;
 				}
 
-				const double di = k_factor_ * (Si - Ei);
-				const double dj = k_factor_ * (Sj - Ej); // = -di
+				const double di = k_factor * (Si - Ei);
+				const double dj = k_factor * (Sj - Ej); // = -di
 
 				team_delta[i] += di;
 				team_delta[j] += dj;
