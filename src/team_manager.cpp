@@ -145,11 +145,11 @@ std::vector<user> team_manager::list_users(user_sort sort) const
 /**
  * @brief Form teams: greedy by lowest total power, then random swaps with tolerance.
  */
-std::vector<team> team_manager::form_teams(std::span<const user_id> participant_ids, int num_teams, std::optional<uint64_t> seed) const
+std::expected<std::vector<team>, error> team_manager::form_teams(std::span<const user_id> participant_ids, int num_teams, std::optional<uint64_t> seed) const
 {
 	// Allow uneven team sizes; only require at least one member per team.
 	if (num_teams <= 0)
-		return {};
+		return std::unexpected(error{"隊伍數須為正整數"});
 
 	// Gather current user snapshots.
 	std::vector<user> players;
@@ -162,11 +162,11 @@ std::vector<team> team_manager::form_teams(std::span<const user_id> participant_
 	const int P = static_cast<int>(players.size());
 	const int T = num_teams;
 
-	// Infeasible if fewer participants than teams (we don't allow empty teams).
-	if (T > P)
-		return {};
+	// Infeasible if fewer participants than teams.
 	if (P == 0)
-		return {};
+		return std::unexpected(error{"沒有參與者"});
+	if (T > P)
+		return std::unexpected(error{"隊伍數大於參與者數"});
 
 	// Randomize input order to keep results varied run-to-run.
 	std::mt19937_64 rng(seed.value_or(std::random_device{}()));
@@ -194,21 +194,13 @@ std::vector<team> team_manager::form_teams(std::span<const user_id> participant_
 	for (const auto &u : players) {
 		size_t best_i = 0;
 		double best_cost = std::numeric_limits<double>::infinity();
-		bool chosen = false;
 
 		for (size_t i = 0; i < teams.size(); ++i) {
 			const double cost = projected_spread(i, u.combat_power);
-			if (!chosen || cost < best_cost) {
+			const bool better = (cost < best_cost) || (cost == best_cost && std::uniform_int_distribution<int>(0, 1)(rng));
+			if (better) {
 				best_cost = cost;
 				best_i = i;
-				chosen = true;
-			}
-			else if (cost == best_cost) {
-				// Random tie-break to preserve diversity across runs.
-				if (std::uniform_int_distribution<int>(0, 1)(rng)) {
-					best_cost = cost;
-					best_i = i;
-				}
 			}
 		}
 		teams[best_i].add_member(u);
@@ -307,7 +299,7 @@ std::expected<ok_t, error> team_manager::record_match(std::vector<team> teams, s
 				if (!u)
 					continue;
 				u->games++;
-				if (winner_ids.count(static_cast<uint64_t>(m.id))) {
+				if (winner_ids.contains(static_cast<uint64_t>(m.id))) {
 					u->wins++;
 				}
 			}
@@ -329,11 +321,7 @@ std::vector<match_record> team_manager::recent_matches(int count) const
 {
 	if (count <= 0)
 		return {};
-	std::vector<match_record> out;
-	out.reserve(std::min<int>(count, history_.size()));
-	for (int i = static_cast<int>(history_.size()) - 1; i >= 0 && static_cast<int>(out.size()) < count; --i)
-		out.push_back(history_[i]);
-	return out;
+	return history_ | std::views::reverse | std::views::take(static_cast<size_t>(count)) | std::ranges::to<std::vector>();
 }
 
 } // namespace terry::bot

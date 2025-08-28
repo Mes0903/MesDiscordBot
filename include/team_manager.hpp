@@ -69,7 +69,8 @@ public:
 	 * @param rng Random engine for controlled randomization.
 	 * @return Teams with roughly balanced total power; size may be uneven unless caller enforces it.
 	 */
-	[[nodiscard]] std::vector<team> form_teams(std::span<const user_id> participant_ids, int num_teams = 2, std::optional<uint64_t> seed = std::nullopt) const;
+	[[nodiscard]] std::expected<std::vector<team>, error> form_teams(std::span<const user_id> participant_ids, int num_teams = 2,
+																																	 std::optional<uint64_t> seed = std::nullopt) const;
 
 	/**
 	 * @brief Record a finished match and update per-user W/L statistics.

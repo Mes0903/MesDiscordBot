@@ -19,8 +19,8 @@
 #include <charconv>
 #include <chrono>
 #include <format>
+#include <iterator>
 #include <random>
-#include <sstream>
 #include <unordered_set>
 
 namespace terry::bot {
@@ -29,9 +29,7 @@ std::string command_handler::make_token()
 {
 	static std::mt19937_64 rng{std::random_device{}()};
 	std::uniform_int_distribution<uint64_t> dist;
-	std::ostringstream oss;
-	oss << std::hex << dist(rng);
-	return oss.str();
+	return std::format("{:x}", dist(rng));
 }
 
 /**
@@ -67,24 +65,24 @@ void command_handler::on_slash(const dpp::slashcommand_t &ev)
  */
 void command_handler::on_button(const dpp::button_click_t &ev)
 {
-	const auto &cid = ev.custom_id;
+	const std::string_view cid = ev.custom_id;
 
 	// Accept only interactions originating from our panel widgets
 	// (custom_id must start with "panel:")
-	if (!starts_with(cid, "panel:")) {
+	if (!cid.starts_with("panel:")) {
 		reply_err(ev, text::unsupported_button);
 		return;
 	}
 
 	// custom_id layout: panel:<panel_id>:<action>[:arg]
-	auto rest = cid.substr(6);
-	auto p1 = rest.find(':');
+	const auto rest = cid.substr(6);
+	const auto p1 = rest.find(':');
 	if (p1 == std::string::npos)
 		return;
-	auto pid = rest.substr(0, p1);
-	auto action = rest.substr(p1 + 1);
+	const auto pid = rest.substr(0, p1);
+	const auto action = rest.substr(p1 + 1);
 
-	auto it = sessions_.find(pid);
+	auto it = sessions_.find(std::string{pid});
 	if (it == sessions_.end()) {
 		reply_err(ev, text::panel_expired);
 		return;
@@ -118,23 +116,22 @@ void command_handler::on_button(const dpp::button_click_t &ev)
 		//  seed to keep results varied per click.
 		const uint64_t seed = static_cast<uint64_t>(std::chrono::high_resolution_clock::now().time_since_epoch().count());
 
-		// Form teams with uneven sizes allowed (minimize total-power spread).
-		sess.last_teams = tm_.form_teams(sess.selected, T, seed);
-
-		if (sess.last_teams.empty()) {
-			reply_err(ev, "Team assignment failed. Please re-check participants and team count.");
+		if (auto res = tm_.form_teams(sess.selected, T, seed); !res) {
+			reply_err(ev, res.error().message);
 			return;
+		}
+		else {
+			sess.last_teams = std::move(*res);
 		}
 
 		ev.reply(dpp::ir_update_message, build_panel_message(sess));
 		return;
 	}
 
-	if (starts_with(action, "win:")) {
+	if (action.starts_with("win:")) {
 		int idx{};
 		{
-			auto s = action.substr(4);
-			auto sv = std::string_view{s};
+			const auto sv = action.substr(4);
 			int val{};
 			auto [ptr, ec] = std::from_chars(sv.data(), sv.data() + sv.size(), val, 10);
 			if (ec != std::errc{} || ptr != sv.data() + sv.size()) {
@@ -185,24 +182,23 @@ void command_handler::on_button(const dpp::button_click_t &ev)
  */
 void command_handler::on_select(const dpp::select_click_t &ev)
 {
-	const auto &cid = ev.custom_id;
-
-	if (!starts_with(cid, "panel:")) {
+	const std::string_view cid = ev.custom_id;
+	if (!cid.starts_with("panel:")) {
 		reply_err(ev, text::unsupported_select);
 		return;
 	}
 
 	// custom_id layout for the select menu: panel:<panel_id>:select
-	auto rest = cid.substr(6);
-	auto p1 = rest.find(':');
+	const auto rest = cid.substr(6);
+	const auto p1 = rest.find(':');
 	if (p1 == std::string::npos)
 		return;
-	auto pid = rest.substr(0, p1);
-	auto action = rest.substr(p1 + 1);
+	const auto pid = rest.substr(0, p1);
+	const auto action = rest.substr(p1 + 1);
 	if (action != "select")
 		return;
 
-	auto it = sessions_.find(pid);
+	auto it = sessions_.find(std::string{pid});
 	if (it == sessions_.end()) {
 		reply_err(ev, text::panel_expired);
 		return;
@@ -223,7 +219,7 @@ void command_handler::on_select(const dpp::select_click_t &ev)
 	sess.selected.clear();
 	for (const auto &v : ev.values) {
 		uint64_t id{};
-		auto sv = std::string_view{v};
+		const auto sv = std::string_view{v};
 		auto [ptr, ec] = std::from_chars(sv.data(), sv.data() + sv.size(), id, 10);
 		if (ec == std::errc{} && ptr == sv.data() + sv.size()) {
 			sess.selected.push_back(user_id{id});
@@ -357,12 +353,11 @@ void command_handler::cmd_listusers(const dpp::slashcommand_t &ev)
 	dpp::embed e;
 	e.set_title("使用者清單");
 
-	std::ostringstream os;
+	std::string desc;
 	auto users = tm_.list_users(user_sort::by_power_desc);
 	for (const auto &u : users) {
-		int rate = (u.games > 0) ? (u.wins * 100 + u.games / 2) / u.games : 0;
-		os << "<@" << static_cast<uint64_t>(u.id) << "> ** (" << std::format("{:.3f}", u.combat_power) << " CP)**"
-			 << " — 勝率 " << rate << "% (" << u.wins << "/" << u.games << ")\n";
+		const int rate = (u.games > 0) ? (u.wins * 100 + u.games / 2) / u.games : 0;
+		std::format_to(std::back_inserter(desc), "<@{}> **({:.3f} CP)** — 勝率 {}% ({}/{})\n", static_cast<uint64_t>(u.id), u.combat_power, rate, u.wins, u.games);
 	}
 
 	if (users.empty()) {
@@ -370,7 +365,7 @@ void command_handler::cmd_listusers(const dpp::slashcommand_t &ev)
 		return;
 	}
 
-	e.set_description(os.str());
+	e.set_description(std::move(desc));
 	ev.reply(dpp::message().add_embed(e));
 }
 
@@ -428,7 +423,7 @@ void command_handler::cmd_history(const dpp::slashcommand_t &ev)
 
 	dpp::embed e;
 	e.set_title("近期對戰");
-	std::ostringstream os;
+	std::string desc;
 
 	if (recents.empty()) {
 		reply_err(ev, text::no_history);
@@ -437,9 +432,9 @@ void command_handler::cmd_history(const dpp::slashcommand_t &ev)
 	else {
 		int idx = 1;
 		for (const auto &m : recents) {
-			// title line (winner summary)
 			std::string winners;
 			if (!m.winning_teams.empty()) {
+				winners.reserve(m.winning_teams.size() * 8);
 				winners += "勝利隊伍：";
 				for (size_t i = 0; i < m.winning_teams.size(); ++i) {
 					if (i)
@@ -450,9 +445,9 @@ void command_handler::cmd_history(const dpp::slashcommand_t &ev)
 			else {
 				winners = "未紀錄勝方";
 			}
-
-			os << "**比賽 #" << idx++ << "（" << winners << "）**\n";
-			os << format_timestamp(m.when) << "\n";
+			std::format_to(std::back_inserter(desc), "**比賽 #{}（{}）**\n", idx++, winners);
+			desc += format_timestamp(m.when);
+			desc.push_back('\n');
 
 			// team lines: prefix trophy for winners, spaces for others
 			std::unordered_set<int> winset(m.winning_teams.begin(), m.winning_teams.end());
@@ -460,25 +455,25 @@ void command_handler::cmd_history(const dpp::slashcommand_t &ev)
 			const std::string LOSE_PREFIX = std::string(text::runner_up);
 
 			for (size_t ti = 0; ti < m.teams.size(); ++ti) {
-				const bool is_winner = winset.count(static_cast<int>(ti)) > 0;
+				const bool is_winner = winset.contains(static_cast<int>(ti));
 				const std::string &prefix = is_winner ? TROPHY_PREFIX : LOSE_PREFIX;
+				std::format_to(std::back_inserter(desc), "{}隊伍 {}：", prefix, ti + 1);
 
-				os << prefix << "隊伍 " << (ti + 1) << "：";
 				bool first = true;
 				for (const auto &mem : m.teams[ti].members) {
 					if (!first)
-						os << "、";
-					os << "<@" << static_cast<uint64_t>(mem.id) << ">";
+						desc += "、";
+					std::format_to(std::back_inserter(desc), "<@{}>", static_cast<uint64_t>(mem.id));
 					first = false;
 				}
-				os << "\n";
+				desc.push_back('\n');
 			}
 
-			os << "\n";
+			desc.push_back('\n');
 		}
 	}
 
-	e.set_description(os.str());
+	e.set_description(std::move(desc));
 	ev.reply(dpp::message().add_embed(e));
 }
 
@@ -496,22 +491,22 @@ dpp::message command_handler::build_panel_message(const selection_session &s) co
 	e.set_title("分配隊伍面板");
 
 	auto db_users = tm_.list_users(user_sort::by_name_asc);
-	std::ostringstream body;
-	body << "隊伍數量： **" << s.num_teams << "**\n";
+	std::string body;
+	std::format_to(std::back_inserter(body), "隊伍數量： **{}**\n", s.num_teams);
 	const bool can_assign = s.selected.size() >= static_cast<size_t>(s.num_teams);
 
 	// Participants (rendered as Discord mentions)
 	if (!s.selected.empty()) {
-		body << "參與者 (" << s.selected.size() << ")： ";
+		std::format_to(std::back_inserter(body), "參與者 ({})： ", s.selected.size());
 		for (auto id : s.selected)
-			body << "<@" << static_cast<uint64_t>(id) << "> ";
-		body << "\n\n";
+			std::format_to(std::back_inserter(body), "<@{}> ", static_cast<uint64_t>(id));
+		body += "\n\n";
 
 		if (!can_assign)
-			body << "⚠️ 需至少選擇 " << s.num_teams << " 名玩家（每隊 1 人）才能分配。\n";
+			std::format_to(std::back_inserter(body), "⚠️ 需至少選擇 {} 名玩家（每隊 1 人）才能分配。\n", s.num_teams);
 	}
 	else {
-		body << "*於底下的清單中選取要參與隊伍分配的使用者*\n";
+		body += "*於底下的清單中選取要參與隊伍分配的使用者*\n";
 	}
 
 	if (!s.last_teams.empty()) {
@@ -522,20 +517,20 @@ dpp::message command_handler::build_panel_message(const selection_session &s) co
 
 		for (size_t i = 0; i < s.last_teams.size(); ++i) {
 			const auto &team = s.last_teams[i];
-			body << "隊伍 " << (i + 1) << "（總戰力 " << std::format("{:.3f}", team.total_power) << " CP）：";
+			std::format_to(std::back_inserter(body), "隊伍 {}（總戰力 {:.3f} CP）：", i + 1, team.total_power);
 			bool first = true;
 			for (const auto &m : team.members) {
 				if (!first)
-					body << "、";
-				body << "<@" << static_cast<uint64_t>(m.id) << ">";
+					body += "、";
+				std::format_to(std::back_inserter(body), "<@{}>", static_cast<uint64_t>(m.id));
 				first = false;
 			}
-			body << "\n";
+			body.push_back('\n');
 		}
-		body << "最大戰力差：" << std::format("{:.3f}", (maxp - minp)) << " CP\n";
+		std::format_to(std::back_inserter(body), "最大戰力差：{:.3f} CP\n", (maxp - minp));
 	}
 
-	e.set_description(body.str());
+	e.set_description(std::move(body));
 	msg.add_embed(e);
 
 	dpp::component row1;
