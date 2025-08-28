@@ -28,6 +28,9 @@ add_executable(${PROJECT_NAME} ${SRC_FILES})
 
 # Find DPP library
 find_package(DPP REQUIRED)
+# Print configuration info
+message(STATUS "Building ${PROJECT_NAME} with C++${CMAKE_CXX_STANDARD}")
+message(STATUS "DPP found: ${DPP_FOUND}")
 
 # Set up include directories
 target_include_directories(${PROJECT_NAME} PRIVATE 
@@ -53,11 +56,30 @@ set_target_properties(${PROJECT_NAME} PROPERTIES
 # Create directories for data files
 file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
-# Copy .bot_token file if it exists
-if(EXISTS ${CMAKE_SOURCE_DIR}/.bot_token)
-    configure_file(${CMAKE_SOURCE_DIR}/.bot_token ${CMAKE_BINARY_DIR}/bin/.bot_token COPYONLY)
+# --- Data dir settings (files moved under repo_root/data) ---
+set(TERRY_DATA_DIR "${CMAKE_SOURCE_DIR}/data")
+file(MAKE_DIRECTORY "${TERRY_DATA_DIR}")
+
+# Create empty JSON files if missing (do NOT overwrite existing data)
+if(NOT EXISTS "${TERRY_DATA_DIR}/users.json")
+  file(WRITE "${TERRY_DATA_DIR}/users.json" "[]")
+endif()
+if(NOT EXISTS "${TERRY_DATA_DIR}/matches.json")
+  file(WRITE "${TERRY_DATA_DIR}/matches.json" "[]")
 endif()
 
-# Print configuration info
-message(STATUS "Building ${PROJECT_NAME} with C++${CMAKE_CXX_STANDARD}")
-message(STATUS "DPP found: ${DPP_FOUND}")
+# If you still want a copy of the token near the binary for legacy workflows, keep this;
+# otherwise you can remove it. It’s safe to leave it (no effect on Docker).
+if(EXISTS "${TERRY_DATA_DIR}/.bot_token")
+  configure_file("${TERRY_DATA_DIR}/.bot_token"
+                 "${CMAKE_BINARY_DIR}/bin/.bot_token" COPYONLY)
+endif()
+
+# A convenient 'run' target: run the bot with CWD = data/
+add_custom_target(run
+  COMMAND ${CMAKE_COMMAND} -E env "TZ=Asia/Taipei"
+          ${CMAKE_BINARY_DIR}/bin/${PROJECT_NAME}
+  WORKING_DIRECTORY "${TERRY_DATA_DIR}"
+  DEPENDS ${PROJECT_NAME}
+  USES_TERMINAL
+)

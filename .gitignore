@@ -1,4 +1,5 @@
 build/
 .vscode/
+data/
 .bot_token
 *.json

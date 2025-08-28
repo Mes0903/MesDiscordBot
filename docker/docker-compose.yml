@@ -10,7 +10,4 @@ services:
       - TZ=Asia/Taipei
     volumes:
       - ..:/workspace
-      - ../users.json:/workspace/run/users.json
-      - ../matches.json:/workspace/run/matches.json
-      - ../.bot_token:/workspace/run/.bot_token:ro
     restart: unless-stopped
