@@ -143,15 +143,20 @@ std::vector<user> team_manager::list_users(user_sort sort) const
 }
 
 /**
- * @brief Form teams: greedy by lowest total point, then random swaps with tolerance.
+ * @brief Partition selected participants into the specified number of teams
+ *        by solving a balanced team assignment problem. Uses an exact
+ *        branch-and-bound search (ILP-style) to minimize the spread between
+ *        the strongest and weakest team (max(total) - min(total)). Ensures
+ *        every team has at least one member. Returns the optimal team split
+ *        or an error if infeasible.
  */
-std::expected<std::vector<team>, error> team_manager::form_teams(std::span<const user_id> participant_ids, int num_teams, std::optional<uint64_t> seed) const
+std::expected<std::vector<team>, error> team_manager::form_teams(std::span<const user_id> participant_ids, int num_teams) const
 {
-	// Allow uneven team sizes; only require at least one member per team.
+	// ---- Sanity checks ------------------------------------------------------
 	if (num_teams < 1) [[unlikely]]
 		return std::unexpected(error{"隊伍數須為正整數"});
 
-	// Gather current user snapshots.
+	// Gather current user snapshots in the same way as before.
 	std::vector<user> players;
 	players.reserve(participant_ids.size());
 	for (auto id : participant_ids) {
@@ -162,52 +167,194 @@ std::expected<std::vector<team>, error> team_manager::form_teams(std::span<const
 	const int P = static_cast<int>(players.size());
 	const int T = num_teams;
 
-	// Infeasible if fewer participants than teams.
 	if (P == 0) [[unlikely]]
 		return std::unexpected(error{"沒有參與者"});
 	if (T > P) [[unlikely]]
 		return std::unexpected(error{"隊伍數大於參與者數"});
 
-	// Randomize input order to keep results varied run-to-run.
-	std::mt19937_64 rng(seed.value_or(std::random_device{}()));
-	std::ranges::shuffle(players, rng);
-
-	// Prepare T empty teams; no capacity limit (uneven allowed).
-	std::vector<team> teams(T);
-	std::vector<double> totals(T, 0.0); // keep running total point per team
-
-	auto projected_spread = [&](size_t place_idx, double add_point) {
-		// Compute max(total) - min(total) if we assign 'add_point' to team 'place_idx'.
-		double maxv = -std::numeric_limits<double>::infinity();
-		double minv = std::numeric_limits<double>::infinity();
-		for (size_t j = 0; j < totals.size(); ++j) {
-			const double tj = (j == place_idx) ? (totals[j] + add_point) : totals[j];
-			if (tj > maxv)
-				maxv = tj;
-			if (tj < minv)
-				minv = tj;
+	// build a local RNG
+	auto make_seed = [&]() -> uint64_t {
+		// hash participants
+		uint64_t h = 1469598103934665603ull; // FNV offset
+		std::vector<uint64_t> participant_ids;
+		participant_ids.reserve(participant_ids.size());
+		for (auto id : participant_ids)
+			participant_ids.push_back(static_cast<uint64_t>(id));
+		std::ranges::sort(participant_ids);
+		for (uint64_t x : participant_ids) {
+			h ^= x;
+			h *= 1099511628211ull; // FNV prime
 		}
-		return maxv - minv;
+		// mix with wall-clock for run-to-run variation
+		uint64_t t = static_cast<uint64_t>(std::chrono::system_clock::now().time_since_epoch().count());
+		// xorshift mix
+		t ^= t >> 33;
+		t *= 0xff51afd7ed558ccdULL;
+		t ^= t >> 33;
+		t *= 0xc4ceb9fe1a85ec53ULL;
+		t ^= t >> 33;
+		return h ^ t;
 	};
 
-	// Greedy assignment: for each player, put them where the total-point spread is minimized.
-	for (const auto &u : players) {
-		size_t best_i = 0;
-		double best_cost = std::numeric_limits<double>::infinity();
+	// ---- Preprocess ---------------------------------------------------------
+	// Shuffle first, then stable_sort by rating so ties become randomized (seeded).
+	std::mt19937_64 rng(make_seed());
+	std::ranges::shuffle(players, rng);
+	std::ranges::stable_sort(players, std::greater<>{}, &user::point);
 
-		for (size_t i = 0; i < teams.size(); ++i) {
-			const double cost = projected_spread(i, u.point);
-			const bool better = (cost < best_cost) || (cost == best_cost && std::uniform_int_distribution<int>(0, 1)(rng));
-			if (better) {
-				best_cost = cost;
-				best_i = i;
+	// Precompute suffix sums of remaining points for quick bounds.
+	std::vector<double> suf(P + 1, 0.0);
+	for (int i = P - 1; i >= 0; --i)
+		suf[i] = suf[i + 1] + players[i].point;
+	const double TOTAL = suf[0];
+	const double TARGET_MEAN = TOTAL / static_cast<double>(T);
+
+	auto spread_of = [](const std::vector<double> &v) {
+		auto [mn, mx] = std::minmax_element(v.begin(), v.end());
+		return (mx == v.end() || mn == v.end()) ? 0.0 : (*mx - *mn);
+	};
+
+	// ---- Upper bound via a quick greedy (random tie-break) ------------------
+	std::vector<int> best_asg(P, -1);
+	std::vector<double> ub_tot(T, 0.0);
+	{
+		std::vector<double> totals(T, 0.0);
+		for (int k = 0; k < P; ++k) {
+			int best_t = 0;
+			double best_cost = std::numeric_limits<double>::infinity();
+			for (int t = 0; t < T; ++t) {
+				double mx = -std::numeric_limits<double>::infinity();
+				double mn = std::numeric_limits<double>::infinity();
+				for (int j = 0; j < T; ++j) {
+					const double tj = (j == t) ? (totals[j] + players[k].point) : totals[j];
+					mx = std::max(mx, tj);
+					mn = std::min(mn, tj);
+				}
+				const double cost = mx - mn;
+				if (cost < best_cost) {
+					best_cost = cost;
+					best_t = t;
+				}
+				else if (cost == best_cost) {
+					// random tie-break among equal-cost teams
+					if (std::uniform_int_distribution<int>(0, 1)(rng))
+						best_t = t;
+				}
 			}
+			totals[best_t] += players[k].point;
+			best_asg[k] = best_t;
 		}
-		teams[best_i].add_member(u);
-		totals[best_i] += u.point;
+		ub_tot = totals;
+	}
+	double best_spread = spread_of(ub_tot); // current upper bound
+
+	// ---- Branch & Bound core (unchanged bounds) -----------------------------
+	std::vector<int> cur_asg(P, -1);
+	std::vector<double> totals(T, 0.0);
+	std::vector<int> counts(T, 0);
+
+	auto team_order = [&](std::vector<int> &out) {
+		// deterministic order; we will inject randomness only on end-state replacement
+		out.resize(T);
+		std::iota(out.begin(), out.end(), 0);
+		std::ranges::stable_sort(out, [&](int a, int b) {
+			if (totals[a] != totals[b])
+				return totals[a] < totals[b];
+			return counts[a] < counts[b];
+		});
+	};
+
+	auto lower_bound = [&](int k) -> double {
+		const auto [mn_it, mx_it] = std::minmax_element(totals.begin(), totals.end());
+		const double cur_min = *mn_it, cur_max = *mx_it;
+		const double lb_mean = std::max(cur_max - TARGET_MEAN, TARGET_MEAN - cur_min);
+		const double lb_rem = std::max(0.0, cur_max - (cur_min + suf[k]));
+		return std::max(lb_mean, lb_rem);
+	};
+
+	auto must_fill_empty = [&](int k) -> bool {
+		int empty = 0;
+		for (int t = 0; t < T; ++t)
+			if (counts[t] == 0)
+				++empty;
+		const int left = P - k;
+		return left == empty && empty > 0;
+	};
+
+	std::function<void(int)> dfs = [&](int k) {
+		if (k == P) {
+			// all assigned & feasible
+			for (int t = 0; t < T; ++t)
+				if (counts[t] == 0)
+					return;
+			const double sp = spread_of(totals);
+
+			// accept strictly-better; if equal-best, replace with 50% to diversify
+			if (sp < best_spread - 1e-12) {
+				best_spread = sp;
+				best_asg = cur_asg;
+			}
+			else if (std::abs(sp - best_spread) <= 1e-12) {
+				if (std::uniform_int_distribution<int>(0, 1)(rng)) {
+					best_asg = cur_asg; // swap to an alternative optimal solution
+				}
+			}
+			return;
+		}
+
+		if (lower_bound(k) >= best_spread - 1e-12)
+			return;
+
+		std::vector<int> order;
+		if (!must_fill_empty(k)) {
+			team_order(order);
+		}
+		else {
+			order.clear();
+			for (int t = 0; t < T; ++t)
+				if (counts[t] == 0)
+					order.push_back(t);
+			// optional: randomize the order among empty teams
+			std::ranges::shuffle(order, rng);
+		}
+
+		for (int t : order) {
+			totals[t] += players[k].point;
+			counts[t] += 1;
+			cur_asg[k] = t;
+
+			dfs(k + 1);
+
+			cur_asg[k] = -1;
+			counts[t] -= 1;
+			totals[t] -= players[k].point;
+		}
+	};
+
+	dfs(0);
+
+	// ---- Build result from best_asg (same as before) ------------------------
+	std::vector<team> result(T);
+	for (int k = 0; k < P; ++k) {
+		int t = best_asg[k];
+		if (t < 0 || t >= T) {
+			int best_t = 0;
+			double best_tot = std::numeric_limits<double>::infinity();
+			for (int j = 0; j < T; ++j) {
+				double s = 0.0;
+				for (auto &m : result[j].members)
+					s += m.point;
+				if (s < best_tot) {
+					best_tot = s;
+					best_t = j;
+				}
+			}
+			t = best_t;
+		}
+		result[t].add_member(players[k]);
 	}
 
-	return teams;
+	return result;
 }
 
 /**

@@ -28,4 +28,18 @@ struct error {
 
 using ok_t = std::monostate;
 
+enum class team_strategy {
+	tiered_random, // default: bucketed random by tiers
+	snake_draft,
+	greedy_spread, // your current greedy
+	local_search	 // refine any initial assignment
+};
+
+struct form_options {
+	team_strategy strategy = team_strategy::tiered_random;
+	std::optional<uint64_t> seed{};
+	int max_iters = 1500;			// for local_search
+	bool equal_sizes = false; // 若你將來想限制隊伍同人數，可用得到
+};
+
 } // namespace terry::bot

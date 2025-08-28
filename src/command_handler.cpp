@@ -128,10 +128,8 @@ void command_handler::on_button(const dpp::button_click_t &ev)
 			return;
 		}
 
-		// seed to keep results varied per click.
-		const uint64_t seed = static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count());
 		// assign teams
-		if (auto res = tm_.form_teams(sess.selected, T, seed); !res) [[unlikely]] {
+		if (auto res = tm_.form_teams(sess.selected, T); !res) [[unlikely]] {
 			reply_err(ev, res.error().message);
 			return;
 		}
