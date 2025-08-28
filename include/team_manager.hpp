@@ -1,14 +1,14 @@
 /**
  * @brief
- *  Responsibilities:
- *    - Persist/load users and matches from JSON files
- *    - Manage user registry (upsert, remove, list, find)
- *    - Form balanced teams using a greedy pass + light randomization swaps
- *    - Record matches, update per-user W/L stats, and provide recent history
- *  Notes:
- *    - All public functions return std::expected for explicit error handling
- *    - `form_teams` currently balances by total power; you can enforce equal
- *      team sizes by comparing (size, power) when choosing the next team.
+ * Responsibilities:
+ *   - Persist/load users and matches from JSON files
+ *   - Manage user registry (upsert, remove, list, find)
+ *   - Form balanced teams using a greedy pass + light randomization swaps
+ *   - Record matches, update per-user W/L stats, and provide recent history
+ * Notes:
+ *   - All public functions return std::expected for explicit error handling
+ *   - `form_teams` currently balances by total power; you can enforce equal
+ *     team sizes by comparing (size, power) when choosing the next team.
  */
 
 #pragma once
@@ -50,7 +50,6 @@ public:
 	 * @param id Discord snowflake ID.
 	 * @return true if present; false otherwise.
 	 */
-	[[nodiscard]] bool has_user(user_id id) const noexcept;
 	[[nodiscard]] const user *find_user(user_id id) const noexcept;
 	[[nodiscard]] user *find_user(user_id id) noexcept;
 	[[nodiscard]] std::expected<ok_t, error> upsert_user(user_id id, std::string username, double combat_power);
@@ -70,7 +69,7 @@ public:
 	 * @param rng Random engine for controlled randomization.
 	 * @return Teams with roughly balanced total power; size may be uneven unless caller enforces it.
 	 */
-	[[nodiscard]] std::vector<team> form_teams(std::span<const user_id> participant_ids, int num_teams, std::optional<uint64_t> seed = std::nullopt) const;
+	[[nodiscard]] std::vector<team> form_teams(std::span<const user_id> participant_ids, int num_teams = 2, std::optional<uint64_t> seed = std::nullopt) const;
 
 	/**
 	 * @brief Record a finished match and update per-user W/L statistics.
@@ -89,11 +88,6 @@ public:
 	[[nodiscard]] std::vector<match_record> recent_matches(int count) const;
 
 	// for hidden score
-	void set_k_factor(double k) noexcept
-	{
-		if (std::isfinite(k) && k > 0.0)
-			k_factor_ = k;
-	}
 	double get_k_factor() const noexcept { return k_factor_; }
 
 private:
@@ -104,17 +98,9 @@ private:
 	static constexpr const char *MATCHES_FILE = "matches.json";
 
 	// for hidden score
-	static constexpr const char *CONFIG_FILE = "config.json";
 	double k_factor_{4.0};
 	double delta_cap_scale_{1.0}; // scales the hard cap; cap = delta_cap_scale * k * sqrt(opp_avg)
 	double rating_alpha_{0.5};		// smoothing factor in [0,1], new = old + alpha * delta
-
-	/**
-	 * @brief Map a list of user IDs to known users.
-	 * @param ids IDs to look up.
-	 * @return Vector of users found (unknown IDs are silently skipped).
-	 */
-	[[nodiscard]] std::vector<user> participants_from_ids(std::span<const user_id> ids) const;
 };
 
 } // namespace terry::bot

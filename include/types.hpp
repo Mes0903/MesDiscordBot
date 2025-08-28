@@ -1,7 +1,7 @@
 /**
  * @brief
- *  Shared type aliases, enums, and small helpers used across the bot.
- *  Kept minimal to avoid heavy header dependencies.
+ * Shared type aliases, enums, and small helpers used across the bot.
+ * Kept minimal to avoid heavy header dependencies.
  */
 
 #pragma once

@@ -19,7 +19,6 @@
 #include <charconv>
 #include <chrono>
 #include <format>
-#include <limits>
 #include <random>
 #include <sstream>
 #include <unordered_set>
@@ -54,10 +53,6 @@ void command_handler::on_slash(const dpp::slashcommand_t &ev)
 		return cmd_formteams(ev);
 	if (name == "history")
 		return cmd_history(ev);
-	if (name == "setk")
-		return cmd_setk(ev);
-	if (name == "getk")
-		return cmd_getk(ev);
 
 	reply_err(ev, text::unknown_command);
 }
@@ -256,10 +251,8 @@ std::vector<dpp::slashcommand> command_handler::commands(dpp::snowflake bot_id)
 			.add_option(dpp::command_option(dpp::co_number, "power", "戰力 (>=0.0)", true));
 	cmds.emplace_back("removeuser", "移除使用者", bot_id).add_option(dpp::command_option(dpp::co_user, "user", "Discord 使用者", true));
 	cmds.emplace_back("listusers", "顯示已註冊的使用者", bot_id);
-	cmds.emplace_back("formteams", "分配隊伍", bot_id).add_option(dpp::command_option(dpp::co_integer, "teams", "隊伍數量", true));
-	cmds.emplace_back("history", "顯示近期對戰紀錄", bot_id).add_option(dpp::command_option(dpp::co_integer, "count", "顯示幾場比賽", false));
-	cmds.emplace_back("setk", "設定勝負調整係數 K（預設 4.0）", bot_id).add_option(dpp::command_option(dpp::co_number, "value", "K 值（>0）", true));
-	cmds.emplace_back("getk", "顯示目前的 K 值", bot_id);
+	cmds.emplace_back("formteams", "分配隊伍", bot_id).add_option(dpp::command_option(dpp::co_integer, "teams", "隊伍數量（預設 2）", false));
+	cmds.emplace_back("history", "顯示近期對戰紀錄", bot_id).add_option(dpp::command_option(dpp::co_integer, "count", "要顯示幾筆（預設 5）", false));
 
 	return cmds;
 }
@@ -290,12 +283,6 @@ void command_handler::cmd_help(const dpp::slashcommand_t &ev)
 
 	// Records
 	e.add_field("戰績紀錄", "• `/history [count]` 顯示最近戰績\n", false);
-
-	// Argument
-	e.add_field("參數設定",
-							"• `/getk` 顯示目前 K 值（隱分係數）\n"
-							"• `/setk <value>` 設定 K 值（預設 4.0）",
-							false);
 
 	ev.reply(dpp::message().add_embed(e));
 }
@@ -395,7 +382,13 @@ void command_handler::cmd_listusers(const dpp::slashcommand_t &ev)
  */
 void command_handler::cmd_formteams(const dpp::slashcommand_t &ev)
 {
-	int n = static_cast<int>(std::get<int64_t>(ev.get_parameter("teams")));
+	int n = 2;
+	{
+		auto p = ev.get_parameter("teams");
+		if (std::holds_alternative<int64_t>(p))
+			n = static_cast<int>(std::get<int64_t>(p));
+	}
+
 	if (n <= 0) {
 		reply_err(ev, text::teams_must_positive);
 		return;
@@ -489,22 +482,6 @@ void command_handler::cmd_history(const dpp::slashcommand_t &ev)
 	ev.reply(dpp::message().add_embed(e));
 }
 
-void command_handler::cmd_setk(const dpp::slashcommand_t &ev)
-{
-	double k = std::get<double>(ev.get_parameter("value"));
-	if (!(k > 0.0) || !std::isfinite(k)) {
-		reply_err(ev, "K 必須為正數");
-		return;
-	}
-
-	tm_.set_k_factor(k);
-	if (auto sres = tm_.save(); !sres) { /* ignore */
-	}
-	ev.reply(dpp::message("🔧 已設定 K = " + std::format("{:.3f}", k)));
-}
-
-void command_handler::cmd_getk(const dpp::slashcommand_t &ev) { ev.reply(dpp::message("當前 K = " + std::format("{:.3f}", tm_.get_k_factor()))); }
-
 /**
  * @brief Build the dynamic control panel message:
  *					- An embed showing the current team count, selected users, and last formed teams
@@ -521,6 +498,7 @@ dpp::message command_handler::build_panel_message(const selection_session &s) co
 	auto db_users = tm_.list_users(user_sort::by_name_asc);
 	std::ostringstream body;
 	body << "隊伍數量： **" << s.num_teams << "**\n";
+	const bool can_assign = s.selected.size() >= static_cast<size_t>(s.num_teams);
 
 	// Participants (rendered as Discord mentions)
 	if (!s.selected.empty()) {
@@ -529,22 +507,18 @@ dpp::message command_handler::build_panel_message(const selection_session &s) co
 			body << "<@" << static_cast<uint64_t>(id) << "> ";
 		body << "\n\n";
 
-		// Show helpful hints when assignment is not feasible.
-		if ((int)s.selected.size() < s.num_teams)
-			body << "⚠️ 人數不夠.\n";
+		if (!can_assign)
+			body << "⚠️ 需至少選擇 " << s.num_teams << " 名玩家（每隊 1 人）才能分配。\n";
 	}
 	else {
 		body << "*於底下的清單中選取要參與隊伍分配的使用者*\n";
 	}
 
 	if (!s.last_teams.empty()) {
-		double minp = std::numeric_limits<double>::infinity();
-		double maxp = -std::numeric_limits<double>::infinity();
-
-		for (const auto &t : s.last_teams) {
-			minp = std::min(minp, t.total_power);
-			maxp = std::max(maxp, t.total_power);
-		}
+		// C++23: use minmax_element with a projection instead of minmax on a range
+		const auto [min_it, max_it] = std::ranges::minmax_element(s.last_teams, {}, &team::total_power);
+		const double minp = (min_it != s.last_teams.end()) ? min_it->total_power : 0.0;
+		const double maxp = (max_it != s.last_teams.end()) ? max_it->total_power : 0.0;
 
 		for (size_t i = 0; i < s.last_teams.size(); ++i) {
 			const auto &team = s.last_teams[i];
@@ -592,8 +566,12 @@ dpp::message command_handler::build_panel_message(const selection_session &s) co
 	msg.add_component(row1);
 
 	dpp::component row2;
-	row2.add_component(
-			dpp::component().set_type(dpp::cot_button).set_style(dpp::cos_primary).set_label("分配").set_id("panel:" + s.panel_id + ":assign").set_disabled(false));
+	row2.add_component(dpp::component()
+												 .set_type(dpp::cot_button)
+												 .set_style(dpp::cos_primary)
+												 .set_label("分配")
+												 .set_id("panel:" + s.panel_id + ":assign")
+												 .set_disabled(!can_assign));
 	row2.add_component(dpp::component().set_type(dpp::cot_button).set_style(dpp::cos_danger).set_label("結束").set_id("panel:" + s.panel_id + ":end"));
 	msg.add_component(row2);
 

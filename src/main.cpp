@@ -62,10 +62,10 @@ int main()
 	});
 
 	bot.on_ready([&](const dpp::ready_t &) {
-		if (dpp::run_once<struct register_cmds>()) {
-			auto cmds = command_handler::commands(bot.me.id);
-			bot.guild_bulk_command_create(cmds, GUILD_ID, [](auto) { /* ignore callback */ });
-		}
+		bot.global_bulk_command_create({});
+
+		auto cmds = command_handler::commands(bot.me.id);
+		bot.guild_bulk_command_create(cmds, GUILD_ID, [](auto) { /* ignore callback */ });
 	});
 
 	bot.on_log(dpp::utility::cout_logger());

@@ -1,12 +1,12 @@
 /**
  * @brief
- *  Responsibilities:
- *    - Dispatch slash-commands (help/adduser/removeuser/listusers/formteams/history)
- *    - Manage interactive panel lifecycle (buttons & select menu)
- *    - Enforce ownership and session validity for interactions
- *  Notes:
- *    - custom_id format: `panel:<panel_id>:<action>[:arg]`
- *    - Integer parsing uses std::from_chars (no exceptions)
+ * Responsibilities:
+ *   - Dispatch slash-commands (help/adduser/removeuser/listusers/formteams/history)
+ *   - Manage interactive panel lifecycle (buttons & select menu)
+ *   - Enforce ownership and session validity for interactions
+ * Notes:
+ *   - custom_id format: `panel:<panel_id>:<action>[:arg]`
+ *   - Integer parsing uses std::from_chars (no exceptions)
  */
 
 #pragma once
@@ -101,8 +101,6 @@ private:
 	void cmd_listusers(const dpp::slashcommand_t &ev);
 	void cmd_formteams(const dpp::slashcommand_t &ev);
 	void cmd_history(const dpp::slashcommand_t &ev);
-	void cmd_setk(const dpp::slashcommand_t &ev);
-	void cmd_getk(const dpp::slashcommand_t &ev);
 
 	/** @brief Build the interactive assignment panel message for a given session. */
 	[[nodiscard]] dpp::message build_panel_message(const selection_session &s) const;

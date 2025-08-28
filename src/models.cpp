@@ -9,8 +9,7 @@
 
 #include "models.hpp"
 
-#include <iomanip>
-#include <sstream>
+#include <format>
 
 namespace terry::bot {
 
@@ -98,12 +97,8 @@ match_record match_record::from_json(const json &j)
  */
 std::string format_timestamp(timestamp tp)
 {
-	auto t = std::chrono::system_clock::time_point(tp);
-	std::time_t tt = std::chrono::system_clock::to_time_t(t);
-	std::tm *lt = std::localtime(&tt);
-	std::ostringstream oss;
-	oss << std::put_time(lt, "%Y-%m-%d %H:%M:%S");
-	return oss.str();
+	const auto zt = std::chrono::zoned_time{std::chrono::current_zone(), tp};
+	return std::format("{:%Y-%m-%d %H:%M:%S}", zt);
 }
 
 } // namespace terry::bot

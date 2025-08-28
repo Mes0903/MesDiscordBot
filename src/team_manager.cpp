@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <cmath>
 #include <fstream>
+#include <limits>
 #include <numeric>
 #include <unordered_set>
 
@@ -28,15 +29,6 @@ using json = nlohmann::json;
  */
 std::expected<ok_t, error> team_manager::load()
 {
-	// config (k-factor)
-	if (std::ifstream cf{CONFIG_FILE}) {
-		json c;
-		cf >> c;
-		k_factor_ = c.value("k_factor", 4.0);
-		delta_cap_scale_ = c.value("delta_cap_scale", 1.0);
-		rating_alpha_ = std::clamp(c.value("rating_alpha", 0.5), 0.0, 1.0);
-	}
-
 	// users
 	if (std::ifstream uf{USERS_FILE}) {
 		try {
@@ -71,15 +63,6 @@ std::expected<ok_t, error> team_manager::load()
 std::expected<ok_t, error> team_manager::save() const
 {
 	try {
-		// config
-		if (std::ofstream cf{CONFIG_FILE}) {
-			json c;
-			c["k_factor"] = k_factor_;
-			c["delta_cap_scale"] = delta_cap_scale_;
-			c["rating_alpha"] = rating_alpha_;
-			cf << c.dump(2);
-		}
-
 		// users
 		if (std::ofstream uf{USERS_FILE}) {
 			json arr = json::array();
@@ -100,11 +83,6 @@ std::expected<ok_t, error> team_manager::save() const
 	}
 	return ok_t{};
 }
-
-/**
- * @brief Check if a user exists (by snowflake).
- */
-bool team_manager::has_user(user_id id) const noexcept { return users_.contains(static_cast<uint64_t>(id)); }
 
 const user *team_manager::find_user(user_id id) const noexcept
 {
@@ -149,10 +127,7 @@ std::expected<ok_t, error> team_manager::remove_user(user_id id)
  */
 std::vector<user> team_manager::list_users(user_sort sort) const
 {
-	std::vector<user> v;
-	v.reserve(users_.size());
-	for (const auto &[_, u] : users_)
-		v.push_back(u);
+	auto v = users_ | std::views::values | std::ranges::to<std::vector>();
 	switch (sort) {
 	case user_sort::by_power_desc:
 		std::ranges::sort(v, std::greater{}, &user::combat_power);
@@ -165,20 +140,6 @@ std::vector<user> team_manager::list_users(user_sort sort) const
 		break;
 	}
 	return v;
-}
-
-/**
- * @brief Map a list of IDs to existing users (silently skipping unknown IDs).
- */
-std::vector<user> team_manager::participants_from_ids(std::span<const user_id> ids) const
-{
-	std::vector<user> res;
-	res.reserve(ids.size());
-	for (auto id : ids) {
-		if (auto it = users_.find(static_cast<uint64_t>(id)); it != users_.end())
-			res.push_back(it->second);
-	}
-	return res;
 }
 
 /**
@@ -271,10 +232,10 @@ std::expected<ok_t, error> team_manager::record_match(std::vector<team> teams, s
 
 	// update per-user stats and hidden rating if teams are provided
 	if (!teams.empty()) {
-		// ---- Hidden rating adjustment (generalized to N teams) ----
+		// Hidden rating adjustment
 		// Denominator floor to avoid INF and huge swings when power is ~0
-		constexpr double DENOM_FLOOR = 1.0;
-		constexpr double MIN_POWER = 0.0;
+		constexpr double kDenomFloor = 1.0;
+		constexpr double kMinPower = 0.0;
 
 		std::vector<double> team_sum(teams.size()), team_cnt(teams.size());
 		for (size_t i = 0; i < teams.size(); ++i) {
@@ -305,8 +266,8 @@ std::expected<ok_t, error> team_manager::record_match(std::vector<team> teams, s
 					const double oa = opp_avg[ti];
 
 					// Stabilized denominators
-					const double p_den = std::max(p_raw, DENOM_FLOOR);
-					const double oa_den = std::max(oa, DENOM_FLOOR);
+					const double p_den = std::max(p_raw, kDenomFloor);
+					const double oa_den = std::max(oa, kDenomFloor);
 
 					// Raw delta from your original formula
 					double delta = winner ? (k_factor_ * (oa_den / p_den)) : (-k_factor_ * (p_den / oa_den));
@@ -328,7 +289,7 @@ std::expected<ok_t, error> team_manager::record_match(std::vector<team> teams, s
 					// Safety: avoid NaN/INF and enforce lower bound
 					if (!std::isfinite(np))
 						np = p_raw;
-					u->combat_power = std::max(MIN_POWER, np);
+					u->combat_power = std::max(kMinPower, np);
 				}
 			}
 		}

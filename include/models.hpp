@@ -1,10 +1,10 @@
 /**
  * @brief
- *  Contains lightweight structs and helpers:
- *    - user          : registered player with combat power and W/L stats
- *    - team          : collection of users with cached total power
- *    - match_record  : a persisted game with timestamp, teams, and winners
- *  Also exposes JSON (de)serialization and small utilities.
+ * Contains lightweight structs and helpers:
+ *   - user          : registered player with combat power and W/L stats
+ *   - team          : collection of users with cached total power
+ *   - match_record  : a persisted game with timestamp, teams, and winners
+ * Also exposes JSON (de)serialization and small utilities.
  */
 
 #pragma once
