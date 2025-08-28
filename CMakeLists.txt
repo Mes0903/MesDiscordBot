@@ -10,7 +10,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Enable additional compiler warnings for better code quality
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    add_compile_options(-Wall -Wextra -Wpedantic -Wunreachable-code)
+    add_compile_options(-Wall -Wextra -Wshadow -Wconversion -Wpedantic -Wunreachable-code)
 endif()
 
 # nlohmann/json via submodule
