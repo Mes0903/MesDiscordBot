@@ -13,27 +13,10 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     add_compile_options(-Wall -Wextra -Wpedantic -Wunreachable-code)
 endif()
 
-set(CPM_DOWNLOAD_VERSION 0.39.0)
-set(CPM_SOURCE_CACHE "${CMAKE_BINARY_DIR}/cpm_cache")
-
-if(NOT EXISTS "${CMAKE_BINARY_DIR}/cmake/CPM.cmake")
-	file(DOWNLOAD
-		https://github.com/cpm-cmake/CPM.cmake/releases/download/v${CPM_DOWNLOAD_VERSION}/CPM.cmake
-		${CMAKE_BINARY_DIR}/cmake/CPM.cmake
-		TLS_VERIFY ON)
-endif()
-
-include(${CMAKE_BINARY_DIR}/cmake/CPM.cmake)
-
-# Add nlohmann/json dependency
-CPMAddPackage(
-	NAME nlohmann_json
-	GITHUB_REPOSITORY nlohmann/json
-	VERSION 3.11.3
-	OPTIONS
-		"JSON_BuildTests OFF"
-		"JSON_Install OFF"
-)
+# nlohmann/json via submodule
+set(JSON_BuildTests OFF CACHE INTERNAL "")
+set(JSON_Install OFF CACHE INTERNAL "")
+add_subdirectory(3rdparty/json)
 
 # Add all source files from src/ directory
 file(GLOB SRC_FILES
@@ -78,4 +61,3 @@ endif()
 # Print configuration info
 message(STATUS "Building ${PROJECT_NAME} with C++${CMAKE_CXX_STANDARD}")
 message(STATUS "DPP found: ${DPP_FOUND}")
-message(STATUS "nlohmann/json found: ${nlohmann_json_FOUND}")
