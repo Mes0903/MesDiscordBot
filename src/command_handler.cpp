@@ -383,15 +383,21 @@ void command_handler::cmd_formteams(const dpp::slashcommand_t &ev)
 		if (std::holds_alternative<int64_t>(p))
 			n = static_cast<int>(std::get<int64_t>(p));
 	}
-
-	if (n <= 0) {
+	if (n < 1) {
 		reply_err(ev, text::teams_must_positive);
 		return;
 	}
-	auto all = tm_.list_users(user_sort::by_name_asc);
-	if (all.empty()) {
-		reply_err(ev, text::no_registered_users);
-		return;
+
+	{
+		auto all = tm_.list_users(user_sort::by_name_asc);
+		if (all.empty()) {
+			reply_err(ev, text::no_registered_users);
+			return;
+		}
+		if (static_cast<std::size_t>(n) > all.size()) {
+			reply_err(ev, text::teams_too_much);
+			return;
+		}
 	}
 
 	selection_session s;

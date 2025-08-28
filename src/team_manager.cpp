@@ -148,7 +148,7 @@ std::vector<user> team_manager::list_users(user_sort sort) const
 std::expected<std::vector<team>, error> team_manager::form_teams(std::span<const user_id> participant_ids, int num_teams, std::optional<uint64_t> seed) const
 {
 	// Allow uneven team sizes; only require at least one member per team.
-	if (num_teams <= 0)
+	if (num_teams < 1)
 		return std::unexpected(error{"隊伍數須為正整數"});
 
 	// Gather current user snapshots.

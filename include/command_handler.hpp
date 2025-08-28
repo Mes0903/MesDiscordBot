@@ -32,6 +32,7 @@ inline constexpr std::string_view need_one_per_team = "請至少選擇一名成�
 inline constexpr std::string_view invalid_team_index = "無效的隊伍索引";
 inline constexpr std::string_view unknown_panel_action = "未知的面板操作";
 inline constexpr std::string_view teams_must_positive = "隊伍數量需大於 0";
+inline constexpr std::string_view teams_too_much = "使用者數量不足以分配該隊伍數量";
 inline constexpr std::string_view no_registered_users = "目前沒有註冊的使用者，請先用 `/adduser` 新增";
 inline constexpr std::string_view no_users = "尚無使用者";
 inline constexpr std::string_view no_history = "尚無對戰紀錄";
