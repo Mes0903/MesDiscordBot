@@ -22,6 +22,7 @@
 #include <iterator>
 #include <random>
 #include <unordered_set>
+#include <utility>
 
 namespace terry::bot {
 
@@ -252,7 +253,7 @@ void command_handler::on_button(const dpp::button_click_t &ev)
 		sess.active = false;
 		auto m = (sess.kind == panel_kind::formteams) ? build_formteams_panel_msg_(sess) : build_setwinner_panel_msg_(sess);
 		m.components.clear(); // disable all interactive components (close the panel)
-		m.set_content("🔒 面板已由 <@" + std::to_string(static_cast<uint64_t>(sess.owner_id)) + "> 關閉");
+		m.set_content("🔒 面板已由 <@" + std::to_string(static_cast<uint64_t>(std::as_const(sess.owner_id))) + "> 關閉");
 		ev.reply(dpp::ir_update_message, m);
 		sessions_.erase(it);
 		return;
@@ -471,7 +472,8 @@ void command_handler::cmd_adduser_(const dpp::slashcommand_t &ev)
 		ev.reply(dpp::message(std::string(text::err_prefix) + sres.error().message).set_flags(dpp::m_ephemeral));
 	}
 
-	ev.reply(dpp::message(std::string(text::ok_prefix) + "新增/更新使用者 <@" + std::to_string((uint64_t)uid) + "> 的分數為 " + std::format("{:.3f}", point)));
+	ev.reply(dpp::message(std::string(text::ok_prefix) + "新增/更新使用者 <@" + std::to_string(static_cast<uint64_t>(std::as_const(uid))) + "> 的分數為 " +
+												std::format("{:.3f}", point)));
 }
 
 /**
@@ -487,7 +489,7 @@ void command_handler::cmd_removeuser_(const dpp::slashcommand_t &ev)
 		if (auto sres = tm_.save(); !sres) [[unlikely]] { // save to users.json
 			ev.reply(dpp::message(std::string(text::err_prefix) + sres.error().message).set_flags(dpp::m_ephemeral));
 		}
-		ev.reply(dpp::message("🗑️ 移除使用者 <@" + std::to_string((uint64_t)uid) + ">"));
+		ev.reply(dpp::message("🗑️ 移除使用者 <@" + std::to_string(static_cast<uint64_t>(std::as_const(uid))) + ">"));
 	}
 }
 
@@ -559,7 +561,7 @@ void command_handler::cmd_formteams_(const dpp::slashcommand_t &ev)
 	sessions_.emplace(sess.panel_id, sess);
 
 	dpp::message msg = build_formteams_panel_msg_(sess);
-	msg.set_content("👑 分配面板擁有者：<@" + std::to_string((uint64_t)sess.owner_id) + "> — 只有擁有者可以操作此面板");
+	msg.set_content("👑 分配面板擁有者：<@" + std::to_string(static_cast<uint64_t>(std::as_const(sess.owner_id))) + "> — 只有擁有者可以操作此面板");
 	ev.reply(msg);
 }
 
@@ -685,7 +687,7 @@ dpp::message command_handler::build_formteams_panel_msg_(const panel_session &se
 	if (!sess.selected.empty()) [[likely]] {
 		std::format_to(std::back_inserter(body), "參與者 ({})： ", sess.selected.size());
 		for (auto id : sess.selected)
-			std::format_to(std::back_inserter(body), "<@{}> ", static_cast<uint64_t>(id));
+			std::format_to(std::back_inserter(body), "<@{}> ", static_cast<std::uint64_t>(std::as_const(id)));
 		body += "\n\n";
 
 		// Re-check the quantity once
@@ -728,14 +730,14 @@ dpp::message command_handler::build_formteams_panel_msg_(const panel_session &se
 	size_t max_opts = std::min<size_t>(db_users.size(), 25); // the options in the discord select menu have a hard limit of 25.
 	std::unordered_set<uint64_t> chosen;										 // the chosen member in the last interaction
 	for (auto id : sess.selected)
-		chosen.insert((uint64_t)id);
+		chosen.insert(static_cast<std::uint64_t>(std::as_const(id)));
 
 	// generate the select menu
 	for (size_t i = 0; i < max_opts; ++i) {
 		const auto &u = db_users[i];
-		bool def = chosen.contains((uint64_t)u.id);
-		std::string label = u.username.empty() ? ("<@" + std::to_string((uint64_t)u.id) + ">") : u.username;
-		dpp::select_option opt(label + " (" + std::format("{:.3f}", u.point) + ")", std::to_string((uint64_t)u.id));
+		bool def = chosen.contains(static_cast<uint64_t>(std::as_const(u.id)));
+		std::string label = u.username.empty() ? ("<@" + std::to_string(static_cast<uint64_t>(std::as_const(u.id))) + ">") : u.username;
+		dpp::select_option opt(label + " (" + std::format("{:.3f}", u.point) + ")", std::to_string(static_cast<uint64_t>(std::as_const(u.id))));
 		if (def)
 			opt.set_default(true);
 

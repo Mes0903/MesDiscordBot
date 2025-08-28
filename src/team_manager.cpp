@@ -19,6 +19,7 @@
 #include <limits>
 #include <numeric>
 #include <unordered_set>
+#include <utility>
 
 namespace {
 /**
@@ -57,7 +58,7 @@ std::expected<ok_t, error> team_manager::load()
 			uf >> arr;
 			for (const auto &uj : arr) {
 				auto u = user::from_json(uj);
-				users_.emplace(static_cast<uint64_t>(u.id), std::move(u));
+				users_.emplace(static_cast<uint64_t>(std::as_const(u.id)), std::move(u));
 			}
 		} catch (const std::exception &e) {
 			return std::unexpected(error{std::string{"載入使用者失敗："} + e.what()});
@@ -107,13 +108,13 @@ std::expected<ok_t, error> team_manager::save() const
 
 const user *team_manager::find_user(user_id id) const noexcept
 {
-	auto it = users_.find(static_cast<uint64_t>(id));
+	auto it = users_.find(static_cast<std::uint64_t>(std::as_const(id)));
 	return it == users_.end() ? nullptr : &it->second;
 }
 
 user *team_manager::find_user(user_id id) noexcept
 {
-	auto it = users_.find(static_cast<uint64_t>(id));
+	auto it = users_.find(static_cast<std::uint64_t>(std::as_const(id)));
 	return it == users_.end() ? nullptr : &it->second;
 }
 
@@ -125,7 +126,7 @@ std::expected<ok_t, error> team_manager::upsert_user(user_id id, std::string use
 	if (point < 0) [[unlikely]]
 		return std::unexpected(error{"分數必須 >= 0"});
 
-	auto &u = users_[static_cast<uint64_t>(id)];
+	auto &u = users_[static_cast<std::uint64_t>(std::as_const(id))];
 	u.id = id;
 	u.username = std::move(username);
 	u.point = point;
@@ -138,7 +139,7 @@ std::expected<ok_t, error> team_manager::upsert_user(user_id id, std::string use
  */
 std::expected<ok_t, error> team_manager::remove_user(user_id id)
 {
-	if (users_.erase(static_cast<uint64_t>(id)) == 0) [[unlikely]]
+	if (users_.erase(static_cast<std::uint64_t>(std::as_const(id))) == 0) [[unlikely]]
 		return std::unexpected(error{"該使用者不存在"});
 
 	return ok_t{};
@@ -182,7 +183,7 @@ std::expected<std::vector<team>, error> team_manager::form_teams(std::span<const
 	std::vector<user> players;
 	players.reserve(participant_ids.size());
 	for (auto id : participant_ids) {
-		if (auto it = users_.find(static_cast<uint64_t>(id)); it != users_.end())
+		if (auto it = users_.find(static_cast<std::uint64_t>(std::as_const(id))); it != users_.end())
 			players.push_back(it->second);
 	}
 
@@ -201,7 +202,7 @@ std::expected<std::vector<team>, error> team_manager::form_teams(std::span<const
 		std::vector<uint64_t> ids;
 		ids.reserve(participant_ids.size());
 		for (auto id : participant_ids)
-			ids.push_back(static_cast<uint64_t>(id));
+			ids.push_back(static_cast<std::uint64_t>(std::as_const(id)));
 		std::ranges::sort(ids);
 		for (uint64_t x : ids) {
 			h ^= x;

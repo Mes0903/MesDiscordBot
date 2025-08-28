@@ -10,6 +10,7 @@
 #include "models.hpp"
 
 #include <format>
+#include <utility>
 
 namespace terry::bot {
 
@@ -20,8 +21,12 @@ using json = nlohmann::json;
  */
 json user::to_json() const
 {
-	return json{
-			{"discord_id", static_cast<uint64_t>(id)}, {"username", username}, {"point", point}, {"base_point", base_point}, {"wins", wins}, {"games", games}};
+	return json{{"discord_id", static_cast<std::uint64_t>(std::as_const(id))},
+							{"username", username},
+							{"point", point},
+							{"base_point", base_point},
+							{"wins", wins},
+							{"games", games}};
 }
 
 /**
