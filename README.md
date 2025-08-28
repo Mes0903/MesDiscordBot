@@ -13,16 +13,12 @@ PR & issues are welcome.
 ├── 3rdparty
 │   └── json
 ├── build
-│   ├── 3rdparty
-│   ├── bin
-│   ├── CMakeCache.txt
-│   ├── CMakeFiles
-│   ├── cmake_install.cmake
-│   └── Makefile
+│   └── ...
 ├── cmake
 │   └── FindDPP.cmake
 ├── CMakeLists.txt
 ├── data
+│   ├── .bot_token
 │   ├── matches.json
 │   └── users.json
 ├── docker
