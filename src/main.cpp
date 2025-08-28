@@ -4,7 +4,7 @@
  *   - Read bot token from .bot_token
  *   - Create dpp::cluster and wire handlers (slash, button, select, ready, log)
  *   - Load persistent data via team_manager::load()
- *   - On ready, register global commands once
+ *   - On ready, register (or upsert) guild commands once
  *   - Start the event loop
  *   - On exit, save state via team_manager::save()
  */
@@ -18,10 +18,12 @@
 
 using namespace terry::bot;
 
+static constexpr dpp::snowflake GUILD_ID = 1038042178439614505;
+
 int main()
 {
 	std::string token;
-	if (!(std::ifstream(".bot_token") >> token)) [[unlikely]] {
+	if (!(std::ifstream(".bot_token") >> token)) {
 		std::cerr << "Failed to read .bot_token\n";
 		return 1;
 	}
@@ -29,7 +31,7 @@ int main()
 	dpp::cluster bot(token);
 
 	team_manager tm;
-	if (auto res = tm.load(); !res) [[unlikely]] {
+	if (auto res = tm.load(); !res) {
 		std::cerr << "Warning: " << res.error().message << "\n";
 	}
 
@@ -60,19 +62,17 @@ int main()
 	});
 
 	bot.on_ready([&](const dpp::ready_t &) {
+		bot.global_bulk_command_create({});
+
 		auto cmds = command_handler::commands(bot.me.id);
-		bot.global_bulk_command_create(cmds, [](const auto &cb) {
-			if (cb.is_error()) [[unlikely]] {
-				std::cerr << "Global command upsert failed: " << cb.get_error().message << "\n";
-			}
-		});
+		bot.guild_bulk_command_create(cmds, GUILD_ID, [](auto) { /* ignore callback */ });
 	});
 
 	bot.on_log(dpp::utility::cout_logger());
 
 	bot.start(dpp::st_wait);
 
-	if (auto res = tm.save(); !res) [[unlikely]] {
+	if (auto res = tm.save(); !res) {
 		std::cerr << "Save error: " << res.error().message << "\n";
 	}
 

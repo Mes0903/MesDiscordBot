@@ -20,6 +20,27 @@
 #include <numeric>
 #include <unordered_set>
 
+namespace {
+/**
+ * @brief canonical signature: multiset of team-membership sets (user_id sorted)
+ */
+auto canon(std::span<const terry::bot::team> ts)
+{
+	std::vector<std::vector<uint64_t>> S;
+	S.reserve(ts.size());
+	for (const auto &t : ts) {
+		std::vector<uint64_t> ids;
+		ids.reserve(t.members.size());
+		for (const auto &u : t.members)
+			ids.push_back(static_cast<uint64_t>(u.id));
+		std::ranges::sort(ids);
+		S.push_back(std::move(ids));
+	}
+	std::ranges::sort(S);
+	return S;
+}
+} // namespace
+
 namespace terry::bot {
 
 using json = nlohmann::json;
@@ -103,10 +124,12 @@ std::expected<ok_t, error> team_manager::upsert_user(user_id id, std::string use
 {
 	if (point < 0) [[unlikely]]
 		return std::unexpected(error{"分數必須 >= 0"});
+
 	auto &u = users_[static_cast<uint64_t>(id)];
 	u.id = id;
 	u.username = std::move(username);
 	u.point = point;
+	u.base_point = point; // keep baseline in sync on manual set
 	return ok_t{};
 }
 
@@ -115,10 +138,9 @@ std::expected<ok_t, error> team_manager::upsert_user(user_id id, std::string use
  */
 std::expected<ok_t, error> team_manager::remove_user(user_id id)
 {
-	auto it = users_.find(static_cast<uint64_t>(id));
-	if (it == users_.end()) [[unlikely]]
+	if (users_.erase(static_cast<uint64_t>(id)) == 0) [[unlikely]]
 		return std::unexpected(error{"該使用者不存在"});
-	users_.erase(it);
+
 	return ok_t{};
 }
 
@@ -174,14 +196,14 @@ std::expected<std::vector<team>, error> team_manager::form_teams(std::span<const
 
 	// build a local RNG
 	auto make_seed = [&]() -> uint64_t {
-		// hash participants
+		// hash participants (use the *outer* participant_ids)
 		uint64_t h = 1469598103934665603ull; // FNV offset
-		std::vector<uint64_t> participant_ids;
-		participant_ids.reserve(participant_ids.size());
+		std::vector<uint64_t> ids;
+		ids.reserve(participant_ids.size());
 		for (auto id : participant_ids)
-			participant_ids.push_back(static_cast<uint64_t>(id));
-		std::ranges::sort(participant_ids);
-		for (uint64_t x : participant_ids) {
+			ids.push_back(static_cast<uint64_t>(id));
+		std::ranges::sort(ids);
+		for (uint64_t x : ids) {
 			h ^= x;
 			h *= 1099511628211ull; // FNV prime
 		}
@@ -341,9 +363,7 @@ std::expected<std::vector<team>, error> team_manager::form_teams(std::span<const
 			int best_t = 0;
 			double best_tot = std::numeric_limits<double>::infinity();
 			for (int j = 0; j < T; ++j) {
-				double s = 0.0;
-				for (auto &m : result[j].members)
-					s += m.point;
+				double s = result[j].total_point;
 				if (s < best_tot) {
 					best_tot = s;
 					best_t = j;
@@ -357,180 +377,79 @@ std::expected<std::vector<team>, error> team_manager::form_teams(std::span<const
 	return result;
 }
 
-/**
- * @brief Record a match, update per-user W/L stats, and append to history.
- */
-std::expected<ok_t, error> team_manager::record_match(std::vector<team> teams, std::vector<int> winning_teams, timestamp when)
+std::expected<ok_t, error> team_manager::set_match_winner_by_teams(std::span<const team> teams, std::vector<int> winning_teams)
 {
-	// validate winners
+	// validate indices
 	for (int w : winning_teams) {
-		if (w < 0 || w >= static_cast<int>(teams.size())) [[unlikely]] {
+		if (w < 0 || w >= static_cast<int>(teams.size()))
 			return std::unexpected(error{"無效的勝方隊伍索引"});
+	}
+
+	// find from the back (most recent first)
+	for (auto it = history_.rbegin(); it != history_.rend(); ++it) {
+		if (same_composition_(teams, it->teams)) {
+			it->winning_teams = winning_teams;
+			// DO NOT adjust users_ ratings/W-L here (see header note).
+			return ok_t{};
 		}
 	}
 
-	// update per-user stats using orthodox Elo (base-10 logistic, scale = 400)
-	if (!teams.empty()) [[likely]] {
-		using std::accumulate;
-		using std::pow;
-
-		constexpr double ELO_SCALE = 400.0; // classic Elo scale
-		constexpr double kMinPower = 0.0;
-		constexpr double k_factor = 4.0;
-
-		const std::size_t N = teams.size();
-		std::vector<double> team_sum(N); // sum of member ratings per team
-		// std::vector<std::size_t> team_cnt(N);		// team sizes (for AVG usage)
-		std::vector<double> team_rating(N);			// team rating used by Elo (here we use SUM)
-		std::vector<double> team_delta(N, 0.0); // accumulated team deltas from pairwise matches
-
-		// 1) Aggregate team ratings (choose SUM or AVG; we use SUM here)
-		for (std::size_t i = 0; i < N; ++i) {
-			const auto &members = teams[i].members;
-			// team_cnt[i] = members.size(); // (for AVG usage)
-			team_sum[i] = accumulate(members.begin(), members.end(), 0.0, [](double acc, const user &u) { return acc + u.point; });
-			// SUM: team strength = sum of member ratings (popular team-Elo variant)
-			// Also can apply AVG here: team_rating[i] = (team_cnt[i] ? team_sum[i] / team_cnt[i] : 0.0);
-			team_rating[i] = team_sum[i];
-		}
-
-		// 2) Actual results S_ij via pairwise decomposition
-		//    - win vs non-winner => 1 / 0
-		//    - winner vs winner  => 0.5 / 0.5   (tie among winners)
-		//    - non-winner vs non-winner => 0.5 / 0.5   (tie among losers)
-		std::unordered_set<int> winset(winning_teams.begin(), winning_teams.end());
-
-		auto expected_vs = [&](double Ra, double Rb) -> double {
-			// E[a beats b] = 1 / (1 + 10^((Rb - Ra)/400))
-			const double exp_term = pow(10.0, (Rb - Ra) / ELO_SCALE);
-			return 1.0 / (1.0 + exp_term);
-		};
-
-		// 3) Accumulate team deltas by pairwise Elo updates
-		//    For each pair (i, j):
-		//      di = K * (S_i - E_i), dj = -di  → zero-sum at pair level
-		for (std::size_t i = 0; i < N; ++i) {
-			for (std::size_t j = i + 1; j < N; ++j) {
-				const double Ei = expected_vs(team_rating[i], team_rating[j]);
-				const double Ej = 1.0 - Ei;
-
-				// Actual scores for this pair
-				// (i_win && j_win) => tie among winners (0.5/0.5)
-				// (!i_win && !j_win) => tie among losers (0.5/0.5)
-				const bool i_win = winset.contains(static_cast<int>(i));
-				const bool j_win = winset.contains(static_cast<int>(j));
-				double Si = 0.5, Sj = 0.5; // default tie
-				if (i_win && !j_win) {
-					Si = 1.0;
-					Sj = 0.0;
-				}
-				else if (!i_win && j_win) {
-					Si = 0.0;
-					Sj = 1.0;
-				}
-
-				const double di = k_factor * (Si - Ei);
-				const double dj = k_factor * (Sj - Ej); // = -di
-
-				team_delta[i] += di;
-				team_delta[j] += dj;
-			}
-		}
-
-		// 4) Distribute each team's delta to its members
-		//    Winners: inverse weighting → higher-rated gain less, lower-rated gain more.
-		//    Losers : direct  weighting → higher-rated lose more, lower-rated lose less.
-		//    We normalize weights so that sum of member deltas equals team_delta[ti].
-		for (std::size_t ti = 0; ti < N; ++ti) {
-			const double Ts = team_sum[ti];
-			const auto &members = teams[ti].members;
-
-			if (members.empty())
-				continue;
-
-			// If the team has zero total rating, fall back to equal split.
-			const bool zero_team = (Ts <= 0.0);
-			const double even_share = 1.0 / static_cast<double>(members.size());
-
-			// Positive team_delta => winners; negative => losers.
-			const double td = team_delta[ti];
-			if (std::abs(td) == 0.0) // nothing to distribute
-				continue;
-
-			// Tunables for intra-team weighting.
-			// - kWeightFloor avoids division blow-ups when rating ≈ 0.
-			// - alpha controls how strong the inverse/direct effect is (0.6 = linear).
-			constexpr double kWeightFloor = 1e-6;
-			constexpr double alpha = 0.6;
-
-			// Build weights and normalize.
-			std::vector<double> weights;
-			weights.reserve(members.size());
-
-			if (zero_team) {
-				// Equal split when team total is zero.
-				for (const auto &m : members) {
-					if (auto *u = find_user(m.id)) {
-						double np = u->point + td * even_share;
-						if (!std::isfinite(np))
-							np = u->point;
-						u->point = std::max(kMinPower, np);
-					}
-				}
-				continue;
-			}
-
-			// Winners: w_i = 1 / (rating^alpha)  → higher rating → smaller weight
-			// Losers : w_i = (rating^alpha)      → higher rating → larger  weight
-			const bool winners = (td > 0.0);
-			double W = 0.0;
-			for (const auto &m : members) {
-				double r = kWeightFloor;
-				if (const auto *u = find_user(m.id))
-					r = std::max(u->point, kWeightFloor);
-				double wi = winners ? std::pow(r, -alpha) : std::pow(r, alpha);
-				weights.push_back(wi);
-				W += wi;
-			}
-			if (W <= 0.0)
-				W = static_cast<double>(members.size()); // safety
-
-			// Apply normalized shares.
-			for (std::size_t k = 0; k < members.size(); ++k) {
-				const auto &m = members[k];
-				if (auto *u = find_user(m.id)) {
-					const double share = weights[k] / W;
-					double np = u->point + td * share;
-					if (!std::isfinite(np))
-						np = u->point;										// safety
-					u->point = std::max(kMinPower, np); // non-negativity
-				}
-			}
-		}
-
-		// Win/Loss counters
-		std::unordered_set<uint64_t> winner_ids;
-		for (int wi : winning_teams)
-			for (const auto &m : teams[wi].members)
-				winner_ids.insert(static_cast<uint64_t>(m.id));
-
-		for (const auto &t : teams) {
-			for (const auto &m : t.members) {
-				if (auto *u = find_user(m.id)) {
-					u->games++;
-					if (winner_ids.contains(static_cast<uint64_t>(m.id)))
-						u->wins++;
-				}
-			}
-		}
-	}
-
+	// Not found → append as a new record with current timestamp
 	match_record mr;
-	mr.when = when;
-	mr.teams = std::move(teams); // persisted as id-only (models.cpp)
+	mr.when = std::chrono::time_point_cast<timestamp::duration>(std::chrono::system_clock::now());
+	mr.teams = std::vector<team>(teams.begin(), teams.end());
 	mr.winning_teams = std::move(winning_teams);
 	history_.push_back(std::move(mr));
 	return ok_t{};
+}
+
+std::expected<std::size_t, error> team_manager::add_match(std::vector<team> teams, timestamp when)
+{
+	match_record mr;
+	mr.when = when;
+	mr.teams = std::move(teams); // persisted as id-only (see models.cpp)
+	mr.winning_teams.clear();		 // no winners yet
+	history_.push_back(std::move(mr));
+	return history_.size() - 1;
+}
+
+std::expected<ok_t, error> team_manager::set_match_winner_by_index(std::size_t index, std::vector<int> winning_teams)
+{
+	if (index >= history_.size())
+		return std::unexpected(error{"比賽索引超出範圍"});
+
+	const auto &teams = history_[index].teams;
+	for (int w : winning_teams) {
+		if (w < 0 || w >= static_cast<int>(teams.size()))
+			return std::unexpected(error{"無效的勝方隊伍索引"});
+	}
+
+	history_[index].winning_teams = std::move(winning_teams);
+	// NOTE: ratings/W-L are NOT recomputed retroactively here.
+	return ok_t{};
+}
+
+std::vector<std::pair<std::size_t, match_record>> team_manager::recent_matches_with_index(int count) const
+{
+	std::vector<std::pair<std::size_t, match_record>> out;
+	if (count <= 0 || history_.empty())
+		return out;
+
+	const std::size_t take = std::min<std::size_t>(static_cast<std::size_t>(count), history_.size());
+	const std::size_t start = history_.size() - take; // oldest index in the slice
+
+	out.reserve(take);
+	for (std::size_t i = start; i < history_.size(); ++i)
+		out.emplace_back(i, history_[i]); // oldest → newest order
+
+	return out;
+}
+
+std::optional<match_record> team_manager::match_by_index(std::size_t index) const
+{
+	if (index >= history_.size())
+		return std::nullopt;
+	return history_[index];
 }
 
 /**
@@ -541,6 +460,170 @@ std::vector<match_record> team_manager::recent_matches(int count) const
 	if (count <= 0) [[unlikely]]
 		return {};
 	return history_ | std::views::reverse | std::views::take(static_cast<size_t>(count)) | std::ranges::to<std::vector>();
+}
+
+std::expected<ok_t, error> team_manager::recompute_all_from_history()
+{
+	// 1) reset all users to their baseline & clear W/L
+	for (auto &[id, u] : users_) {
+		u.point = u.base_point; // baseline persisted in users.json
+		u.wins = 0;
+		u.games = 0;
+	}
+
+	// 2) get chronological order (by timestamp, tie-break by index)
+	std::vector<std::size_t> order(history_.size());
+	std::iota(order.begin(), order.end(), 0);
+	std::stable_sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) { return history_[a].when < history_[b].when; });
+
+	// 3) replay all matches
+	for (std::size_t idx : order) {
+		const auto &mr = history_[idx];
+		if (auto r = apply_match_effect_(mr.teams, mr.winning_teams); !r) [[unlikely]]
+			return std::unexpected(r.error());
+	}
+	return ok_t{};
+}
+
+bool team_manager::same_composition_(std::span<const team> a, std::span<const team> b)
+{
+	if (a.size() != b.size())
+		return false;
+	return canon(a) == canon(b);
+}
+
+std::expected<ok_t, error> team_manager::apply_match_effect_(std::span<const team> teams, std::span<const int> winning_teams)
+{
+	// --- Validate inputs first ---
+	if (teams.empty())
+		return std::unexpected(error{"沒有隊伍可套用"});
+	for (int w : winning_teams) {
+		if (w < 0 || w >= static_cast<int>(teams.size()))
+			return std::unexpected(error{"無效的勝方隊伍索引"});
+	}
+
+	// Prepare team sums/ratings
+	constexpr double ELO_SCALE = 400.0;
+	constexpr double kMinPower = 0.0;
+	constexpr double k_factor = 4.0;
+
+	const std::size_t N = teams.size();
+	std::vector<double> team_sum(N, 0.0);
+	std::vector<double> team_rating(N, 0.0);
+	std::vector<double> team_delta(N, 0.0);
+
+	for (std::size_t i = 0; i < N; ++i) {
+		double sum = 0.0;
+		for (const auto &m : teams[i].members) {
+			if (const auto *u = find_user(m.id))
+				sum += u->point;
+		}
+		team_sum[i] = sum;
+		team_rating[i] = sum; // SUM model
+	}
+
+	std::unordered_set<int> winset(winning_teams.begin(), winning_teams.end());
+	auto expected_vs = [&](double Ra, double Rb) -> double {
+		const double exp_term = std::pow(10.0, (Rb - Ra) / ELO_SCALE);
+		return 1.0 / (1.0 + exp_term);
+	};
+
+	// Pairwise deltas
+	for (std::size_t i = 0; i < N; ++i) {
+		for (std::size_t j = i + 1; j < N; ++j) {
+			const double Ei = expected_vs(team_rating[i], team_rating[j]);
+			const double Ej = 1.0 - Ei;
+			const bool i_win = winset.contains(static_cast<int>(i));
+			const bool j_win = winset.contains(static_cast<int>(j));
+			double Si = 0.5, Sj = 0.5;
+			if (i_win && !j_win) {
+				Si = 1.0;
+				Sj = 0.0;
+			}
+			else if (!i_win && j_win) {
+				Si = 0.0;
+				Sj = 1.0;
+			}
+			const double di = k_factor * (Si - Ei);
+			const double dj = k_factor * (Sj - Ej);
+			team_delta[i] += di;
+			team_delta[j] += dj;
+		}
+	}
+
+	// Distribute team deltas to members
+	constexpr double kWeightFloor = 1e-6;
+	constexpr double alpha = 0.6;
+
+	for (std::size_t ti = 0; ti < N; ++ti) {
+		const double Ts = team_sum[ti];
+		const auto &members = teams[ti].members;
+		if (members.empty())
+			continue;
+
+		const bool winners = (team_delta[ti] > 0.0);
+		const double td = team_delta[ti];
+		if (std::abs(td) == 0.0)
+			continue;
+
+		if (Ts <= 0.0) {
+			const double even = 1.0 / static_cast<double>(members.size());
+			for (const auto &m : members) {
+				if (auto *u = find_user(m.id)) {
+					double np = u->point + td * even;
+					if (!std::isfinite(np))
+						return std::unexpected(error{"數值不穩定（NaN/Inf）"});
+					u->point = std::max(kMinPower, np);
+				}
+			}
+		}
+		else {
+			std::vector<double> weights;
+			weights.reserve(members.size());
+			double W = 0.0;
+			for (const auto &m : members) {
+				double r = kWeightFloor;
+				if (const auto *u = find_user(m.id))
+					r = std::max(u->point, kWeightFloor);
+				double wi = winners ? std::pow(r, -alpha) : std::pow(r, alpha);
+				if (!std::isfinite(wi))
+					return std::unexpected(error{"數值不穩定（NaN/Inf）"});
+				weights.push_back(wi);
+				W += wi;
+			}
+			if (!(W > 0.0))
+				return std::unexpected(error{"權重總和異常（<=0）"});
+
+			for (std::size_t k = 0; k < members.size(); ++k) {
+				const auto &m = members[k];
+				if (auto *u = find_user(m.id)) {
+					const double share = weights[k] / W;
+					double np = u->point + td * share;
+					if (!std::isfinite(np))
+						return std::unexpected(error{"數值不穩定（NaN/Inf）"});
+					u->point = std::max(kMinPower, np);
+				}
+			}
+		}
+	}
+
+	// Win/Loss counters
+	std::unordered_set<uint64_t> winner_ids;
+	for (int wi : winning_teams)
+		for (const auto &m : teams[wi].members)
+			winner_ids.insert(static_cast<uint64_t>(m.id));
+
+	for (const auto &t : teams) {
+		for (const auto &m : t.members) {
+			if (auto *u = find_user(m.id)) {
+				u->games++;
+				if (winner_ids.contains(static_cast<uint64_t>(m.id)))
+					u->wins++;
+			}
+		}
+	}
+
+	return ok_t{};
 }
 
 } // namespace terry::bot

@@ -22,9 +22,10 @@ struct user {
 
 	user_id id{};
 	std::string username;
-	double point{}; // >= 0
-	int wins{};			// persisted in users.json
-	int games{};		// persisted in users.json
+	double point{};					// >= 0
+	double base_point{0.0}; // rating baseline used for full recomputation
+	int wins{};							// persisted in users.json
+	int games{};						// persisted in users.json
 
 	[[nodiscard]] json to_json() const;
 	[[nodiscard]] static user from_json(const json &);

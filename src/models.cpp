@@ -20,7 +20,8 @@ using json = nlohmann::json;
  */
 json user::to_json() const
 {
-	return json{{"discord_id", static_cast<uint64_t>(id)}, {"username", username}, {"point", point}, {"wins", wins}, {"games", games}};
+	return json{
+			{"discord_id", static_cast<uint64_t>(id)}, {"username", username}, {"point", point}, {"base_point", base_point}, {"wins", wins}, {"games", games}};
 }
 
 /**
@@ -32,6 +33,7 @@ user user::from_json(const json &j)
 	u.id = user_id(j.at("discord_id").get<uint64_t>());
 	u.username = j.at("username").get<std::string>();
 	u.point = j.at("point").get<double>();
+	u.base_point = j.value("base_point", u.point); // default to point if old file
 	u.wins = j.value("wins", 0);
 	u.games = j.value("games", 0);
 	return u;

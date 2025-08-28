@@ -72,13 +72,37 @@ public:
 	[[nodiscard]] std::expected<std::vector<team>, error> form_teams(std::span<const user_id> ids, int num_teams = 2) const;
 
 	/**
-	 * @brief Record a finished match and update per-user W/L statistics.
-	 * @param teams Teams that participated.
-	 * @param winning_teams Optional indices of winning teams, to accept multiple winner, it was an vector of team index.
-	 * @return ok_t on success; error on validation failure.
+	 * @brief Update winners of an existing match identified by exact team composition (order-insensitive).
+	 *        If no such match exists, append a new record with the provided winners and 'now' as timestamp.
+	 *        NOTE: This function ONLY rewrites matches.json and the in-memory history_;
+	 *              it DOES NOT retroactively adjust user ratings (point) nor W/L counters.
 	 */
-	[[nodiscard]] std::expected<ok_t, error> record_match(std::vector<team> teams, std::vector<int> winning_teams,
-																												timestamp when = std::chrono::time_point_cast<timestamp::duration>(std::chrono::system_clock::now()));
+	[[nodiscard]] std::expected<ok_t, error> set_match_winner_by_teams(std::span<const team> teams, std::vector<int> winning_teams);
+
+	/**
+	 * @brief Append a new match entry WITHOUT touching ratings/W-L.
+	 *        Winners remain empty until later set via set_match_winner_*().
+	 * @return index of the newly appended match in history_.
+	 */
+	[[nodiscard]] std::expected<std::size_t, error>
+	add_match(std::vector<team> teams, timestamp when = std::chrono::time_point_cast<timestamp::duration>(std::chrono::system_clock::now()));
+
+	/**
+	 * @brief Overwrite winners of an existing match by its index in history_.
+	 *        Does NOT retroactively adjust user ratings/W-L.
+	 */
+	[[nodiscard]] std::expected<ok_t, error> set_match_winner_by_index(std::size_t index, std::vector<int> winning_teams);
+
+	/**
+	 * @brief Return pairs of (history index, match) for last `count` entries,
+	 *        ordered from oldest → newest among the slice.
+	 */
+	[[nodiscard]] std::vector<std::pair<std::size_t, match_record>> recent_matches_with_index(int count) const;
+
+	/**
+	 * @brief Fetch a match by absolute index in history_. Returns std::nullopt if out of range.
+	 */
+	[[nodiscard]] std::optional<match_record> match_by_index(std::size_t index) const;
 
 	/**
 	 * @brief Retrieve the most recent matches (newest first).
@@ -86,10 +110,19 @@ public:
 	 * @return A vector of match records in reverse chronological order.
 	 */
 	[[nodiscard]] std::vector<match_record> recent_matches(int count) const;
+	[[nodiscard]] std::expected<ok_t, error> recompute_all_from_history();
 
 private:
 	std::unordered_map<uint64_t, user> users_;
 	std::vector<match_record> history_;
+	static bool same_composition_(std::span<const team> a, std::span<const team> b);
+
+	/**
+	 * @brief Apply Elo/W/L effects in-place to users_ for a single match.
+	 *        Validates inputs (e.g., winner indices) and numeric stability.
+	 *        Returns error if data is inconsistent (e.g., corrupted history).
+	 */
+	[[nodiscard]] std::expected<ok_t, error> apply_match_effect_(std::span<const team> teams, std::span<const int> winning_teams);
 
 	static constexpr const char *USERS_FILE = "users.json";
 	static constexpr const char *MATCHES_FILE = "matches.json";

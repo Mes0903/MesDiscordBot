@@ -14,6 +14,7 @@
 #include "team_manager.hpp"
 #include <dpp/dpp.h>
 
+#include <deque>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -48,29 +49,46 @@ inline void reply_err(const dpp::slashcommand_t &ev, std::string_view s) { ev.re
 inline void reply_err(const dpp::button_click_t &ev, std::string_view s) { ev.reply(dpp::ir_channel_message_with_source, make_err_msg(s)); }
 inline void reply_err(const dpp::select_click_t &ev, std::string_view s) { ev.reply(dpp::ir_channel_message_with_source, make_err_msg(s)); }
 
+// Panel usage
+enum class panel_kind { formteams, setwinner };
+
+/**
+ * @struct panel_session
+ * @brief Tracks the state for an interactive assignment panel.
+ * @note Invalidated when the owner presses "End", or upon expiry.
+ */
+struct panel_session {
+	std::string panel_id;
+	dpp::snowflake guild_id{}, channel_id{}, owner_id{};
+	int num_teams = 2;
+	std::vector<user_id> selected;
+	std::vector<team> last_teams;
+	bool active = true;
+	// Lifecycle time points (count-based eviction; no time-based expiry)
+	std::chrono::steady_clock::time_point created_at{};
+	std::chrono::steady_clock::time_point last_touch{};
+	panel_kind kind{panel_kind::formteams};
+	// For setwinner: currently selected snapshot index in sessions_
+	std::optional<std::size_t> chosen{};
+};
+
+/**
+ * @brief A snapshot of a formed match used by /setwinner.
+ * It stores only the essentials we need to render and update winners.
+ */
+struct match_snapshot {
+	std::string snap_id;			 // stable ID used by <select> value
+	timestamp when{};					 // when the teams were formed
+	dpp::snowflake owner_id{}; // who formed the teams
+	std::vector<team> teams;	 // formed teams (members + total_point)
+};
+
 /**
  * @class command_handler
  * @brief Wires DPP events (slash/button/select) to bot behaviors.
  */
 class command_handler {
 public:
-	/**
-	 * @struct panel_session
-	 * @brief Tracks the state for an interactive assignment panel.
-	 * @note Invalidated when the owner presses "End", or upon expiry.
-	 */
-	struct panel_session {
-		std::string panel_id;
-		dpp::snowflake guild_id{};
-		dpp::snowflake channel_id{};
-		dpp::snowflake owner_id{};
-		int num_teams{};
-		std::vector<user_id> selected;
-		std::vector<team> last_teams;
-		bool active{true};
-		std::chrono::steady_clock::time_point expires_at{};
-	};
-
 	/**
 	 * @brief Construct a command handler bound to a dpp::cluster and team_manager.
 	 * @param bot Discord cluster (event source/sink).
@@ -92,22 +110,23 @@ public:
 private:
 	team_manager &tm_;
 	std::unordered_map<std::string, panel_session, std::hash<std::string_view>, std::equal_to<>> sessions_;
-	void purge_expired_sessions();
+	void keep_recent_sessions_(std::size_t max_sessions = 8);
 
 	// helpers (ui/panel)
-	static std::string make_token();
-	static bool starts_with(const std::string &s, const std::string &p) { return s.rfind(p, 0) == 0; }
+	static std::string make_token_();
 
 	// commands
-	void cmd_help(const dpp::slashcommand_t &ev);
-	void cmd_adduser(const dpp::slashcommand_t &ev);
-	void cmd_removeuser(const dpp::slashcommand_t &ev);
-	void cmd_listusers(const dpp::slashcommand_t &ev);
-	void cmd_formteams(const dpp::slashcommand_t &ev);
-	void cmd_history(const dpp::slashcommand_t &ev);
+	void cmd_help_(const dpp::slashcommand_t &ev);
+	void cmd_adduser_(const dpp::slashcommand_t &ev);
+	void cmd_removeuser_(const dpp::slashcommand_t &ev);
+	void cmd_listusers_(const dpp::slashcommand_t &ev);
+	void cmd_formteams_(const dpp::slashcommand_t &ev);
+	void cmd_history_(const dpp::slashcommand_t &ev);
+	void cmd_setwinner_(const dpp::slashcommand_t &ev);
 
 	/** @brief Build the interactive assignment panel message for a given session. */
-	[[nodiscard]] dpp::message build_formteams_panel_msg(const panel_session &s) const;
+	[[nodiscard]] dpp::message build_formteams_panel_msg_(const panel_session &s) const;
+	[[nodiscard]] dpp::message build_setwinner_panel_msg_(const panel_session &sess) const;
 };
 
 } // namespace terry::bot
