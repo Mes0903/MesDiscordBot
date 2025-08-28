@@ -48,7 +48,7 @@ PR & issues are welcome.
 
 - A C++23-capable compiler (e.g., GCC 14+ / Clang 16+)
 - CMake 3.22+
-- [DPP] (Discord++ library) discoverable by CMake (see `cmake/FindDPP.cmake`).
+- [DPP](https://dpp.dev/) (Discord++ library) discoverable by CMake (see `cmake/FindDPP.cmake`).
   - See [Installing D++](https://dpp.dev/installing.html) for more detail.
 - A Discord bot token stored in **`data/.bot_token`** (file with a single line: the token string).
   - You need to make the `data` folder manually.
