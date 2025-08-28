@@ -1,0 +1,10 @@
+build/
+.git/
+.gitmodules
+.gitignore
+cmake-build-*/
+.vscode/
+.idea/
+*.o
+*.obj
+*.log

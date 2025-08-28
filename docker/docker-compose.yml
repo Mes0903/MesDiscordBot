@@ -1,0 +1,16 @@
+services:
+  terry-bot:
+    build:
+      context: ..                 # repo root as build context
+      dockerfile: docker/DOCKERFILE
+    image: terry-aoe2-dcbot:dev
+    container_name: terry-aoe2-dcbot
+    environment:
+      - BUILD_TYPE=RelWithDebInfo
+      - TZ=Asia/Taipei
+    volumes:
+      - ..:/workspace
+      - ../users.json:/workspace/run/users.json
+      - ../matches.json:/workspace/run/matches.json
+      - ../.bot_token:/workspace/run/.bot_token:ro
+    restart: unless-stopped

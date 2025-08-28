@@ -1,0 +1,28 @@
+FROM ubuntu:24.04
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+# Toolchain and deps for bot
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates wget git build-essential cmake pkg-config \
+    libssl-dev zlib1g-dev libsodium-dev libopus-dev g++-14 \
+ && rm -rf /var/lib/apt/lists/*
+
+# make g++ point to g++-14 (and gcc to gcc-14)
+RUN update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-14 100 \
+ && update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 100
+
+# Same as the official "3 lines": download and install the libdpp .deb
+RUN wget -O /tmp/dpp.deb https://dl.dpp.dev/ \
+ && dpkg -i /tmp/dpp.deb || (apt-get update && apt-get -y -f install && dpkg -i /tmp/dpp.deb) \
+ && rm -f /tmp/dpp.deb
+
+# Build inside container from the bind-mounted repo
+WORKDIR /workspace
+
+# compose context is repo root (..), so path is relative to that root
+COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+ENV BUILD_TYPE=RelWithDebInfo TZ=Asia/Taipei
+ENTRYPOINT ["entrypoint.sh"]
