@@ -4,7 +4,7 @@
  *   - Read bot token from .bot_token
  *   - Create dpp::cluster and wire handlers (slash, button, select, ready, log)
  *   - Load persistent data via team_manager::load()
- *   - On ready, register (or upsert) guild commands once
+ *   - On ready, register global commands once
  *   - Start the event loop
  *   - On exit, save state via team_manager::save()
  */
@@ -17,8 +17,6 @@
 #include <iostream>
 
 using namespace terry::bot;
-
-static constexpr dpp::snowflake GUILD_ID = 1038042178439614505;
 
 int main()
 {
@@ -62,10 +60,12 @@ int main()
 	});
 
 	bot.on_ready([&](const dpp::ready_t &) {
-		bot.global_bulk_command_create({});
-
 		auto cmds = command_handler::commands(bot.me.id);
-		bot.guild_bulk_command_create(cmds, GUILD_ID, [](auto) { /* ignore callback */ });
+		bot.global_bulk_command_create(cmds, [](const auto &cb) {
+			if (cb.is_error()) {
+				std::cerr << "Global command upsert failed: " << cb.get_error().message << "\n";
+			}
+		});
 	});
 
 	bot.on_log(dpp::utility::cout_logger());
