@@ -14,7 +14,7 @@
 
 using namespace terry;
 
-static constexpr dpp::snowflake guild_id = 1038042178439614505;
+// static constexpr dpp::snowflake guild_id = 1038042178439614505;
 
 int main()
 {
@@ -70,12 +70,12 @@ int main()
 	});
 
 	bot.on_ready([&](const dpp::ready_t &) {
-		// Clear global commands
-		bot.global_bulk_command_create({});
+		// Clear legacy guild-only commands
+		// bot.guild_bulk_command_create({}, guild_id);
 
-		// Register guild commands
+		// Register GLOBAL commands (visible in every guild the bot is in).
 		auto cmds = command_handler::commands(bot.me.id);
-		bot.guild_bulk_command_create(cmds, guild_id);
+		bot.global_bulk_command_create(cmds);
 	});
 
 	bot.on_log(dpp::utility::cout_logger());
