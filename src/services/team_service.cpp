@@ -12,11 +12,11 @@ auto team_service::form_teams(std::span<const user> participants, formation_conf
 {
 	// ---- Sanity checks ------------------------------------------------------
 	if (config.num_teams < 1) {
-		return std::unexpected(type::error{std::string(constants::text::teams_must_positive)});
+		return std::unexpected(type::error{constants::text::teams_must_positive});
 	}
 
 	if (participants.size() < static_cast<std::size_t>(config.num_teams)) {
-		return std::unexpected(type::error{std::string(constants::text::users_not_enough)});
+		return std::unexpected(type::error{constants::text::users_not_enough});
 	}
 
 	const int P = static_cast<int>(participants.size());

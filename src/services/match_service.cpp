@@ -56,7 +56,7 @@ auto match_service::find_user(dpp::snowflake id) const -> std::optional<std::ref
 auto match_service::upsert_user(dpp::snowflake id, std::string username, double point) -> std::expected<std::monostate, type::error>
 {
 	if (point < 0) {
-		return std::unexpected(type::error{std::string(constants::text::point_must_positive)});
+		return std::unexpected(type::error{constants::text::point_must_positive});
 	}
 
 	auto &u = users_[util::id_to_u64(id)];
@@ -71,7 +71,7 @@ auto match_service::upsert_user(dpp::snowflake id, std::string username, double 
 auto match_service::remove_user(dpp::snowflake id) -> std::expected<std::monostate, type::error>
 {
 	if (users_.erase(util::id_to_u64(id)) == 0) {
-		return std::unexpected(type::error{std::string(constants::text::users_not_found)});
+		return std::unexpected(type::error{constants::text::users_not_found});
 	}
 	return std::monostate{};
 }
@@ -179,7 +179,7 @@ auto match_service::apply_match_effect(std::span<const team> teams, std::span<co
 {
 	// --- Validate inputs first ---
 	if (teams.empty()) {
-		return std::unexpected(type::error{std::string(constants::text::teams_must_positive)});
+		return std::unexpected(type::error{constants::text::teams_must_positive});
 	}
 
 	for (int w : winners) {

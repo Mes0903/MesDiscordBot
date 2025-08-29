@@ -16,6 +16,14 @@ using timestamp = std::chrono::sys_seconds;
 struct error {
 	std::string message;
 
+	constexpr error(std::string_view sv) : message(sv) {}
+
+	constexpr error() = default;
+	constexpr error(const error &) = default;
+	constexpr error(error &&) noexcept = default;
+	constexpr error &operator=(const error &) = default;
+	constexpr error &operator=(error &&) noexcept = default;
+
 	// explicit object parameter
 	[[nodiscard]] auto what(this const auto &self) -> std::string_view { return self.message; }
 };
