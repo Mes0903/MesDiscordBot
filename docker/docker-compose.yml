@@ -3,8 +3,8 @@ services:
     build:
       context: ..                 # repo root as build context
       dockerfile: docker/DOCKERFILE
-    image: terry-aoe2-dcbot:dev
-    container_name: terry-aoe2-dcbot
+    image: terry-dcbot:dev
+    container_name: terry-dcbot
     environment:
       - BUILD_TYPE=RelWithDebInfo
       - TZ=Asia/Taipei
