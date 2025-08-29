@@ -69,20 +69,44 @@ auto command_handler::cmd_adduser(const dpp::slashcommand_t &ev) -> void
 	dpp::snowflake uid = std::get<dpp::snowflake>(ev.get_parameter("user"));
 	double point = std::get<double>(ev.get_parameter("point"));
 
-	// Try to get username
-	std::string username;
-	if (auto it = ev.command.resolved.users.find(uid); it != ev.command.resolved.users.end()) {
-		const auto &user = it->second;
-		username = !user.global_name.empty() ? user.global_name : user.username;
+	// Resolve a human-readable display name for `uid` in this guild.
+	// Priority: guild nickname > global display name > username (handle).
+	std::string display;
+
+	// First, try the member object parsed from this slash invocation.
+	if (auto mit = ev.command.resolved.members.find(uid); mit != ev.command.resolved.members.end()) {
+		// Empty string means the member has no nickname in this guild.
+		display = mit->second.get_nickname();
 	}
 
-	if (username.empty()) {
-		if (auto u = dpp::find_user(uid)) {
-			username = !u->global_name.empty() ? u->global_name : u->username;
+	// If no nickname, fall back to the user parsed from this invocation.
+	if (display.empty()) {
+		if (auto uit = ev.command.resolved.users.find(uid); uit != ev.command.resolved.users.end()) {
+			// Prefer global display name; otherwise use the account handle.
+			display = !uit->second.global_name.empty() ? uit->second.global_name : uit->second.username;
 		}
 	}
 
-	if (auto res = match_svc_->upsert_user(uid, username, point); !res) {
+	// Try the guild cache for a nickname.
+	if (display.empty()) {
+		const dpp::guild_member gm = dpp::find_guild_member(ev.command.guild_id, uid);
+		if (gm.user_id) {															// non-zero means we actually found the member in cache
+			const std::string nick = gm.get_nickname(); // may still be empty
+			if (!nick.empty()) {
+				display = nick;
+			}
+		}
+	}
+
+	// Last resort: user cache (global display name, then handle).
+	if (display.empty()) {
+		if (auto u = dpp::find_user(uid)) {
+			display = !u->global_name.empty() ? u->global_name : u->username;
+		}
+	}
+
+	// Store it (your existing error handling).
+	if (auto res = match_svc_->upsert_user(uid, display, point); !res) {
 		return ui::message_builder::reply_error(ev, res.error().what());
 	}
 
