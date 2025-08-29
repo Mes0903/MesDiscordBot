@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(terry_aoe2_dcbot LANGUAGES CXX)
+project(TerryDiscordBot LANGUAGES CXX)
 
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 
@@ -21,6 +21,7 @@ add_subdirectory(3rdparty/json)
 # Add all source files from src/ directory
 file(GLOB SRC_FILES
 	CONFIGURE_DEPENDS
+  src/*/*.cpp
 	src/*.cpp
 )
 
@@ -80,6 +81,5 @@ add_custom_target(run
   COMMAND ${CMAKE_COMMAND} -E env "TZ=Asia/Taipei"
           ${CMAKE_BINARY_DIR}/bin/${PROJECT_NAME}
   WORKING_DIRECTORY "${TERRY_DATA_DIR}"
-  DEPENDS ${PROJECT_NAME}
   USES_TERMINAL
 )

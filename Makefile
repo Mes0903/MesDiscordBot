@@ -26,7 +26,7 @@ clean:
 .PHONY: run
 run: build
 	@echo "Starting bot..."
-	@cmake --build build --target run
+	@cmake --build build --target run -- -s --no-print-directory
 
 # Development build with debug symbols
 .PHONY: debug

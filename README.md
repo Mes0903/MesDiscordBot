@@ -1,19 +1,22 @@
-# Terry Discord Team Manager Bot (C++23 + CMake + DPP)
+# Terry Discord Team Manager Bot
 
-A lightweight Discord bot for **team management** and **match tracking** inside a server. It keeps a registry of users with a combat power value, lets you form **balanced but randomized** teams, and records match results with a simple history view.
+A lightweight Discord bot for **team management** and **match tracking** inside a server. It keeps a registry of users with a combat power value, lets you form **balanced yet randomized** teams, and records match results with a simple history view.
 
-Built in **modern C++23**, using **CMake** and the **[DPP](https://dpp.dev/)** library.
+Built in **C++23**, using **CMake** and **[DPP](https://dpp.dev/)**.
 
-PR & issues are welcome.
+PR and issues are welcome.
 
 ## Repository Layout
 
 ```
+mes@mes:~/MesRepo/terry-aoe2-DCbot$ tree -aL 3
 .
 ├── 3rdparty
 │   └── json
+...
 ├── build
-│   └── ...
+...
+├── .clang-format
 ├── cmake
 │   └── FindDPP.cmake
 ├── CMakeLists.txt
@@ -24,18 +27,47 @@ PR & issues are welcome.
 ├── docker
 │   ├── docker-compose.yml
 │   ├── DOCKERFILE
+│   ├── .dockerignore
 │   └── entrypoint.sh
+├── .git
+...
+├── .gitignore
+├── .gitmodules
 ├── include
-│   ├── command_handler.hpp
-│   ├── models.hpp
-│   ├── team_manager.hpp
-│   └── types.hpp
+│   ├── core
+│   │   ├── constants.hpp
+│   │   └── utils.hpp
+│   ├── handlers
+│   │   ├── command_handler.hpp
+│   │   ├── interaction_handler.hpp
+│   │   └── session_manager.hpp
+│   ├── models
+│   │   ├── match.hpp
+│   │   ├── team.hpp
+│   │   └── user.hpp
+│   ├── services
+│   │   ├── match_service.hpp
+│   │   ├── persistence_service.hpp
+│   │   └── team_service.hpp
+│   └── ui
+│       ├── embed_builder.hpp
+│       ├── message_builder.hpp
+│       └── panel_builder.hpp
 ├── Makefile
+├── README.md
 └── src
-    ├── command_handler.cpp
+    ├── handlers
+    │   ├── command_handler.cpp
+    │   ├── interaction_handler.cpp
+    │   └── session_manager.cpp
     ├── main.cpp
-    ├── models.cpp
-    └── team_manager.cpp
+    ├── services
+    │   ├── match_service.cpp
+    │   ├── persistence_service.cpp
+    │   └── team_service.cpp
+    └── ui
+        ├── embed_builder.cpp
+        └── panel_builder.cpp
 ```
 
 > **Note**: Persistent data lives in `data/` (JSON files). Do **not** commit the bot token.
@@ -74,12 +106,12 @@ For convenience, a `Makefile` is also provided. You can compile the project dire
 
 ## Run with Docker
 
-### 1) One-time setup
+### 1. One-time setup
 
 - Place your bot token in `data/.bot_token`.
 - Make sure `data/users.json` and `data/matches.json` exist (empty `[]` is fine). The entrypoint will create them if absent.
 
-### 2) Build & start
+### 2. Build & start
 
 ```bash
 cd docker
@@ -102,11 +134,13 @@ The container will compile the project and start the bot. Logs stream in your te
 
 ## Commands (Slash)
 
-| Command       | Arguments                          | Purpose                                                                      |
-| ------------- | ---------------------------------- | ---------------------------------------------------------------------------- |
-| `/adduser`    | `user` (mention), `power` (number) | Add or update a user’s combat power.                                         |
-| `/removeuser` | `user` (mention)                   | Remove a user from the registry.                                             |
-| `/listusers`  | —                                  | List all registered users (sorted for readability).                          |
-| `/formteams`  | `teams` (int, default 2)           | Open a **team-formation panel**. Select participants, then press **Assign**. |
-| `/history`    | `count` (int, default 5)           | Show recent matches with winners and team compositions.                      |
-| `/help`       | —                                  | Show an embedded help panel summarizing all commands.                        |
+| Command       | Arguments                          | Purpose                                                                                        |
+| ------------- | ---------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `/adduser`    | `user` (mention), `point` (number) | Add or update a user’s combat power.                                                           |
+| `/removeuser` | `user` (mention)                   | Remove a user from the registry.                                                               |
+| `/listusers`  | —                                  | List all registered users.                                                                     |
+| `/formteams`  | `teams` (int, default 2)           | Open the team-formation panel. Select participants and press Assign to generate teams.         |
+| `/history`    | `count` (int, default 5)           | Show recent matches, including winners and team compositions.                                  |
+| `/setwinner`  | —                                  | Open the winner-setting panel for the most recent matches (select a match, then mark winners). |
+| `/help`       | —                                  | Show an embedded help panel summarizing all commands.                                          |
+
