@@ -26,4 +26,4 @@ fi
 [[ -s matches.json ]] || printf '[]' > matches.json
 
 # Line-buffer so docker logs shows output immediately
-exec stdbuf -oL -eL /workspace/build/bin/terry_aoe2_dcbot
+exec stdbuf -oL -eL /workspace/build/bin/TerryDiscordBot

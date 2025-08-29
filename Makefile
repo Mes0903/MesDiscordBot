@@ -2,7 +2,6 @@
 
 # Build directory
 BUILD_DIR = build
-BINARY_NAME = terry_aoe2_dcbot
 
 # Default target
 .PHONY: all
