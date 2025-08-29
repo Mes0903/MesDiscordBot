@@ -114,7 +114,24 @@ auto command_handler::cmd_adduser(const dpp::slashcommand_t &ev) -> void
 		return ui::message_builder::reply_error(ev, res.error().what());
 	}
 
-	return ev.reply(ui::message_builder::success(std::format("新增/更新使用者 {} 的分數為 {:.3f}", util::mention(uid), point)));
+	// Build a single response: content = success toast, embed = current user list
+	// Query the latest user list (sorted just like `/listusers`)
+	auto users = match_svc_->list_users(true);
+
+	// Compose the success line first
+	std::string ok = std::format("新增/更新使用者 {} 的分數為 {:.3f}", util::mention(uid), point);
+
+	// If the list is empty (edge case), append the "no users" hint to content.
+	if (users.empty()) {
+		ok += std::format("\n{}", constants::text::no_users);
+		return ev.reply(ui::message_builder::success(ok));
+	}
+
+	// Otherwise, attach the user list embed to the same reply.
+	auto embed = ui::embed_builder::build_user_list(users);
+	dpp::message msg = ui::message_builder::success(ok);
+	msg.add_embed(embed);
+	return ev.reply(msg);
 }
 
 auto command_handler::cmd_removeuser(const dpp::slashcommand_t &ev) -> void
@@ -129,7 +146,23 @@ auto command_handler::cmd_removeuser(const dpp::slashcommand_t &ev) -> void
 		return ui::message_builder::reply_error(ev, res.error().what());
 	}
 
-	return ev.reply(dpp::message(std::format("🗑️ 移除使用者 {}", util::mention(uid))));
+	// Build a single response: content = success toast, embed = current user list
+	{
+		auto users = match_svc_->list_users(true);
+
+		// Success line (use your preferred wording/emoji)
+		std::string ok = std::format("🗑️ 移除使用者 {}", util::mention(uid));
+
+		if (users.empty()) {
+			ok += std::format("\n{}", constants::text::no_users);
+			return ev.reply(ui::message_builder::success(ok)); // or ui::message_builder::success(ok)
+		}
+
+		auto embed = ui::embed_builder::build_user_list(users);
+		dpp::message msg = ui::message_builder::success(ok);
+		msg.add_embed(embed);
+		return ev.reply(msg);
+	}
 }
 
 auto command_handler::cmd_listusers(const dpp::slashcommand_t &ev) -> void

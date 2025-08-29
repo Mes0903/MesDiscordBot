@@ -215,7 +215,7 @@ auto panel_builder::create_user_select_menu(const std::string &panel_id, std::sp
 		bool is_selected = selected_set.contains(util::id_to_u64(u.id));
 
 		std::string label = u.username.empty() ? util::mention(u.id) : u.username;
-		label += std::format(" ({:.3f})", u.point);
+		label += std::format(" ({:.3f} CP)", u.point);
 
 		dpp::select_option opt(label, std::to_string(util::id_to_u64(u.id)));
 		if (is_selected) {
