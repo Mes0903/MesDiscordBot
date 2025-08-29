@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <unordered_set>
 
 namespace terry {
@@ -176,76 +177,151 @@ auto match_service::hydrate_match(const match_record &mr) const -> match_record
 
 auto match_service::apply_match_effect(std::span<const team> teams, std::span<const int> winners) -> std::expected<std::monostate, type::error>
 {
+	// --- Validate inputs first ---
 	if (teams.empty()) {
 		return std::unexpected(type::error{std::string(constants::text::teams_must_positive)});
 	}
 
-	// Validate winner indices
 	for (int w : winners) {
 		if (w < 0 || w >= static_cast<int>(teams.size())) {
 			return std::unexpected(type::error{"Invalid winner index"});
 		}
 	}
 
-	// ELO calculation parameters
-	constexpr double K_FACTOR = 4.0;
+	// Prepare team sums/ratings
 	constexpr double ELO_SCALE = 400.0;
+	constexpr double kMinPower = 0.0;
+	constexpr double k_factor = 4.0;
 
-	// Calculate team ratings
-	std::vector<double> team_ratings(teams.size());
-	for (std::size_t i = 0; i < teams.size(); ++i) {
+	const std::size_t N = teams.size();
+	std::vector<double> team_sum(N, 0.0);
+	std::vector<double> team_rating(N, 0.0);
+	std::vector<double> team_delta(N, 0.0);
+
+	for (std::size_t i = 0; i < N; ++i) {
 		double sum = 0.0;
-		for (const auto &member : teams[i].members) {
-			if (auto u = find_user(member.id)) {
+		for (const auto &m : teams[i].members) {
+			if (auto u = find_user(m.id)) {
 				sum += u->get().point;
 			}
 		}
-		team_ratings[i] = sum;
+		team_sum[i] = sum;
+		team_rating[i] = sum; // SUM model
 	}
 
-	// Calculate deltas for each team
-	std::vector<double> team_deltas(teams.size(), 0.0);
-	std::unordered_set<int> winner_set(winners.begin(), winners.end());
+	std::unordered_set<int> winset(winners.begin(), winners.end());
 
-	for (std::size_t i = 0; i < teams.size(); ++i) {
-		for (std::size_t j = i + 1; j < teams.size(); ++j) {
-			double expected_i = 1.0 / (1.0 + std::pow(10.0, (team_ratings[j] - team_ratings[i]) / ELO_SCALE));
-			double expected_j = 1.0 - expected_i;
+	auto expected_vs = [&](double Ra, double Rb) -> double {
+		const double exp_term = std::pow(10.0, (Rb - Ra) / ELO_SCALE);
+		return 1.0 / (1.0 + exp_term);
+	};
 
-			double actual_i = 0.5, actual_j = 0.5;
-			if (winner_set.contains(static_cast<int>(i)) && !winner_set.contains(static_cast<int>(j))) {
-				actual_i = 1.0;
-				actual_j = 0.0;
+	// Pairwise deltas
+	for (std::size_t i = 0; i < N; ++i) {
+		for (std::size_t j = i + 1; j < N; ++j) {
+			const double Ei = expected_vs(team_rating[i], team_rating[j]);
+			const double Ej = 1.0 - Ei;
+			const bool i_win = winset.contains(static_cast<int>(i));
+			const bool j_win = winset.contains(static_cast<int>(j));
+			double Si = 0.5, Sj = 0.5;
+			if (i_win && !j_win) {
+				Si = 1.0;
+				Sj = 0.0;
 			}
-			else if (!winner_set.contains(static_cast<int>(i)) && winner_set.contains(static_cast<int>(j))) {
-				actual_i = 0.0;
-				actual_j = 1.0;
+			else if (!i_win && j_win) {
+				Si = 0.0;
+				Sj = 1.0;
 			}
-
-			team_deltas[i] += K_FACTOR * (actual_i - expected_i);
-			team_deltas[j] += K_FACTOR * (actual_j - expected_j);
+			const double di = k_factor * (Si - Ei);
+			const double dj = k_factor * (Sj - Ej);
+			team_delta[i] += di;
+			team_delta[j] += dj;
 		}
 	}
 
-	// Apply deltas to individual players
-	for (std::size_t team_idx = 0; team_idx < teams.size(); ++team_idx) {
-		const auto &team = teams[team_idx];
-		if (team.empty())
+	// Distribute team deltas to members
+	constexpr double kWeightFloor = 1e-6;
+	constexpr double alpha = 0.6;
+
+	for (std::size_t ti = 0; ti < N; ++ti) {
+		const double Ts = team_sum[ti];
+		const auto &members = teams[ti].members;
+		if (members.empty()) {
 			continue;
+		}
 
-		double delta_per_member = team_deltas[team_idx] / static_cast<double>(team.size());
-		bool is_winner = winner_set.contains(static_cast<int>(team_idx));
+		const bool is_winning_team = (team_delta[ti] > 0.0);
+		const double td = team_delta[ti];
+		if (std::abs(td) == 0.0) {
+			continue;
+		}
 
-		for (const auto &member : team.members) {
-			auto it = users_.find(util::id_to_u64(member.id));
-			if (it == users_.end())
-				continue;
+		if (Ts <= 0.0) {
+			// Even distribution when team sum is zero
+			const double even = 1.0 / static_cast<double>(members.size());
+			for (const auto &m : members) {
+				auto it = users_.find(util::id_to_u64(m.id));
+				if (it != users_.end()) {
+					double np = it->second.point + td * even;
+					if (!std::isfinite(np)) {
+						return std::unexpected(type::error{"Numerical instability (NaN/Inf)"});
+					}
+					it->second.point = std::max(kMinPower, np);
+				}
+			}
+		}
+		else {
+			// Weighted distribution
+			std::vector<double> weights;
+			weights.reserve(members.size());
+			double W = 0.0;
+			for (const auto &m : members) {
+				double r = kWeightFloor;
+				if (auto u = find_user(m.id)) {
+					r = std::max(u->get().point, kWeightFloor);
+				}
+				double wi = is_winning_team ? std::pow(r, -alpha) : std::pow(r, alpha);
+				if (!std::isfinite(wi)) {
+					return std::unexpected(type::error{"Numerical instability (NaN/Inf)"});
+				}
+				weights.push_back(wi);
+				W += wi;
+			}
+			if (!(W > 0.0)) {
+				return std::unexpected(type::error{"Weight sum abnormal (<=0)"});
+			}
 
-			auto &u = it->second;
-			u.point = std::max(0.0, u.point + delta_per_member);
-			u.games++;
-			if (is_winner) {
-				u.wins++;
+			for (std::size_t k = 0; k < members.size(); ++k) {
+				const auto &m = members[k];
+				auto it = users_.find(util::id_to_u64(m.id));
+				if (it != users_.end()) {
+					const double share = weights[k] / W;
+					double np = it->second.point + td * share;
+					if (!std::isfinite(np)) {
+						return std::unexpected(type::error{"Numerical instability (NaN/Inf)"});
+					}
+					it->second.point = std::max(kMinPower, np);
+				}
+			}
+		}
+	}
+
+	// Win/Loss counters
+	std::unordered_set<uint64_t> winner_ids;
+	for (int wi : winners) {
+		for (const auto &m : teams[wi].members) {
+			winner_ids.insert(util::id_to_u64(m.id));
+		}
+	}
+
+	for (const auto &t : teams) {
+		for (const auto &m : t.members) {
+			auto it = users_.find(util::id_to_u64(m.id));
+			if (it != users_.end()) {
+				it->second.games++;
+				if (winner_ids.contains(util::id_to_u64(m.id))) {
+					it->second.wins++;
+				}
 			}
 		}
 	}

@@ -38,11 +38,11 @@ auto session_manager::validate_owner(std::string_view id, dpp::snowflake owner) 
 {
 	auto sess = get_session(id);
 	if (!sess) {
-		return std::unexpected(type::error{std::string(constants::text::panel_expired}));
+		return std::unexpected(type::error{std::string(constants::text::panel_expired)});
 	}
 
 	if (sess->get().owner_id != owner) {
-		return std::unexpected(type::error{std::string(constants::text::panel_owner_only}));
+		return std::unexpected(type::error{std::string(constants::text::panel_owner_only)});
 	}
 
 	return std::monostate{};

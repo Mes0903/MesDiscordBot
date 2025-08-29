@@ -10,7 +10,7 @@ namespace terry {
 
 auto team_service::form_teams(std::span<const user> participants, formation_config config) -> std::expected<std::vector<team>, type::error>
 {
-
+	// ---- Sanity checks ------------------------------------------------------
 	if (config.num_teams < 1) {
 		return std::unexpected(type::error{std::string(constants::text::teams_must_positive)});
 	}
@@ -19,37 +19,29 @@ auto team_service::form_teams(std::span<const user> participants, formation_conf
 		return std::unexpected(type::error{std::string(constants::text::users_not_enough)});
 	}
 
-	bnb_context ctx{}; // zero-init everything, then fill explicitly
-	ctx.players.assign(participants.begin(), participants.end());
-	ctx.num_teams = config.num_teams;
+	const int P = static_cast<int>(participants.size());
+	const int T = config.num_teams;
 
-	// safe defaults (even if you'll recompute later)
-	ctx.suffix_sums.clear();
-	ctx.target_mean = 0.0;
+	// Copy participants to work with
+	std::vector<user> players(participants.begin(), participants.end());
 
-	// allocate working buffers
-	ctx.current_assignment.assign(participants.size(), -1);
-	ctx.current_totals.assign(config.num_teams, 0.0);
-	ctx.current_counts.assign(config.num_teams, 0);
-
-	// best-so-far
-	ctx.best_assignment.assign(participants.size(), -1);
-	ctx.best_spread = std::numeric_limits<double>::infinity();
-
-	// rng: if no seed provided, hash participant IDs (sorted) ^ mixed wall-clock (old impl behavior)
+	// Build a local RNG with deterministic seeding based on participant IDs
 	auto make_seed = [&]() -> std::uint64_t {
+		// Hash participant IDs (sorted) for determinism
 		std::uint64_t h = 1469598103934665603ull; // FNV offset
 		std::vector<std::uint64_t> ids;
-		ids.reserve(ctx.players.size());
-		for (const auto &u : ctx.players)
+		ids.reserve(players.size());
+		for (const auto &u : players) {
 			ids.push_back(util::id_to_u64(u.id));
+		}
 		std::ranges::sort(ids);
 		for (auto x : ids) {
 			h ^= x;
-			h *= 1099511628211ull;
+			h *= 1099511628211ull; // FNV prime
 		}
+		// Mix with wall-clock for run-to-run variation
 		std::uint64_t t = util::id_to_u64(std::chrono::system_clock::now().time_since_epoch().count());
-		// xorshift/murmur-ish mix
+		// xorshift mix
 		t ^= t >> 33;
 		t *= 0xff51afd7ed558ccdULL;
 		t ^= t >> 33;
@@ -57,148 +49,176 @@ auto team_service::form_teams(std::span<const user> participants, formation_conf
 		t ^= t >> 33;
 		return h ^ t;
 	};
-	ctx.rng = std::mt19937_64{config.seed ? config.seed : make_seed()};
 
-	// Prepare players
-	std::ranges::shuffle(ctx.players, ctx.rng);
-	std::ranges::stable_sort(ctx.players, std::greater{}, &user::point);
+	std::mt19937_64 rng(config.seed ? config.seed : make_seed());
 
-	// Compute suffix sums
-	ctx.suffix_sums.resize(ctx.players.size() + 1, 0.0);
-	for (std::size_t i = ctx.players.size(); i > 0; --i) {
-		ctx.suffix_sums[i - 1] = ctx.suffix_sums[i] + ctx.players[i - 1].point;
+	// ---- Preprocess ---------------------------------------------------------
+	// Shuffle first, then stable_sort by rating so ties become randomized
+	std::ranges::shuffle(players, rng);
+	std::ranges::stable_sort(players, std::greater{}, &user::point);
+
+	// Precompute suffix sums of remaining points for quick bounds
+	std::vector<double> suf(P + 1, 0.0);
+	for (int i = P - 1; i >= 0; --i) {
+		suf[i] = suf[i + 1] + players[i].point;
 	}
+	const double TOTAL = suf[0];
+	const double TARGET_MEAN = TOTAL / static_cast<double>(T);
 
-	ctx.target_mean = ctx.suffix_sums[0] / static_cast<double>(config.num_teams);
+	auto spread_of = [](const std::vector<double> &v) {
+		auto [mn, mx] = std::ranges::minmax_element(v);
+		return (mx == v.end() || mn == v.end()) ? 0.0 : (*mx - *mn);
+	};
 
-	// Initialize state
-	ctx.current_assignment.resize(ctx.players.size(), -1);
-	ctx.current_totals.resize(config.num_teams, 0.0);
-	ctx.current_counts.resize(config.num_teams, 0);
-	ctx.best_assignment = ctx.current_assignment;
-	ctx.best_spread = std::numeric_limits<double>::infinity();
-
-	// Solve
-	ctx.solve();
-
-	// Build result
-	std::vector<team> result(config.num_teams);
-	for (std::size_t i = 0; i < ctx.players.size(); ++i) {
-		int team_idx = ctx.best_assignment[i];
-		if (team_idx >= 0 && team_idx < config.num_teams) {
-			result[team_idx].add_member(ctx.players[i]);
+	// ---- Upper bound via a quick greedy (random tie-break) ------------------
+	std::vector<int> best_asg(P, -1);
+	std::vector<double> ub_tot(T, 0.0);
+	{
+		std::vector<double> totals(T, 0.0);
+		for (int k = 0; k < P; ++k) {
+			int best_t = 0;
+			double best_cost = std::numeric_limits<double>::infinity();
+			for (int t = 0; t < T; ++t) {
+				double mx = -std::numeric_limits<double>::infinity();
+				double mn = std::numeric_limits<double>::infinity();
+				for (int j = 0; j < T; ++j) {
+					const double tj = (j == t) ? (totals[j] + players[k].point) : totals[j];
+					mx = std::max(mx, tj);
+					mn = std::min(mn, tj);
+				}
+				const double cost = mx - mn;
+				if (cost < best_cost) {
+					best_cost = cost;
+					best_t = t;
+				}
+				else if (cost == best_cost) {
+					// Random tie-break among equal-cost teams
+					if (std::uniform_int_distribution<int>(0, 1)(rng)) {
+						best_t = t;
+					}
+				}
+			}
+			totals[best_t] += players[k].point;
+			best_asg[k] = best_t;
 		}
+		ub_tot = totals;
 	}
+	double best_spread = spread_of(ub_tot); // Current upper bound
 
-	return result;
-}
+	// ---- Branch & Bound core -------------------------------------------------
+	std::vector<int> cur_asg(P, -1);
+	std::vector<double> totals(T, 0.0);
+	std::vector<int> counts(T, 0);
 
-auto team_service::bnb_context::solve() -> void
-{
-	// Get initial greedy solution
-	for (std::size_t i = 0; i < players.size(); ++i) {
-		auto min_it = std::ranges::min_element(current_totals);
-		int team_idx = util::narrow<int>(std::distance(current_totals.begin(), min_it));
+	auto team_order = [&](std::vector<int> &out) {
+		// Deterministic order; randomness only on end-state replacement
+		out.resize(T);
+		std::iota(out.begin(), out.end(), 0);
+		std::ranges::stable_sort(out, [&](int a, int b) {
+			if (totals[a] != totals[b]) {
+				return totals[a] < totals[b];
+			}
+			return counts[a] < counts[b];
+		});
+	};
 
-		current_totals[team_idx] += players[i].point;
-		current_counts[team_idx]++;
-		best_assignment[i] = team_idx;
-	}
+	auto lower_bound = [&](int k) -> double {
+		const auto [mn_it, mx_it] = std::ranges::minmax_element(totals);
+		const double cur_min = *mn_it, cur_max = *mx_it;
+		const double lb_mean = std::max(cur_max - TARGET_MEAN, TARGET_MEAN - cur_min);
+		const double lb_rem = std::max(0.0, cur_max - (cur_min + suf[k]));
+		return std::max(lb_mean, lb_rem);
+	};
 
-	best_spread = compute_spread();
+	auto must_fill_empty = [&](int k) -> bool {
+		int empty = 0;
+		for (int t = 0; t < T; ++t) {
+			if (counts[t] == 0) {
+				++empty;
+			}
+		}
+		const int left = P - k;
+		return left == empty && empty > 0;
+	};
 
-	// Reset for DFS
-	std::ranges::fill(current_totals, 0.0);
-	std::ranges::fill(current_counts, 0);
-	std::ranges::fill(current_assignment, -1);
+	std::function<void(int)> dfs = [&](int k) {
+		if (k == P) {
+			// All assigned & feasible
+			for (int t = 0; t < T; ++t) {
+				if (counts[t] == 0) {
+					return;
+				}
+			}
+			const double sp = spread_of(totals);
 
-	// Start branch & bound
-	dfs(0);
-}
-
-auto team_service::bnb_context::dfs(int player_idx) -> void
-{
-	if (player_idx == static_cast<int>(players.size())) {
-		// Check if all teams have at least one member
-		if (std::ranges::any_of(current_counts, [](int c) { return c == 0; })) {
+			// Accept strictly-better; if equal-best, replace with 50% to diversify
+			if (sp < best_spread - 1e-12) {
+				best_spread = sp;
+				best_asg = cur_asg;
+			}
+			else if (std::abs(sp - best_spread) <= 1e-12) {
+				if (std::uniform_int_distribution<int>(0, 1)(rng)) {
+					best_asg = cur_asg; // Swap to an alternative optimal solution
+				}
+			}
 			return;
 		}
 
-		double spread = compute_spread();
-		if (spread < best_spread - 1e-9) {
-			best_spread = spread;
-			best_assignment = current_assignment;
+		if (lower_bound(k) >= best_spread - 1e-12) {
+			return;
 		}
-		else if (std::abs(spread - best_spread) < 1e-9) {
-			// Random tie-breaking
-			if (std::uniform_int_distribution<>(0, 1)(rng)) {
-				best_assignment = current_assignment;
+
+		std::vector<int> order;
+		if (!must_fill_empty(k)) {
+			team_order(order);
+		}
+		else {
+			order.clear();
+			for (int t = 0; t < T; ++t) {
+				if (counts[t] == 0) {
+					order.push_back(t);
+				}
 			}
+			// Optional: randomize the order among empty teams
+			std::ranges::shuffle(order, rng);
 		}
-		return;
+
+		for (int t : order) {
+			totals[t] += players[k].point;
+			counts[t] += 1;
+			cur_asg[k] = t;
+
+			dfs(k + 1);
+
+			cur_asg[k] = -1;
+			counts[t] -= 1;
+			totals[t] -= players[k].point;
+		}
+	};
+
+	dfs(0);
+
+	// ---- Build result from best_asg ------------------------------------------
+	std::vector<team> result(T);
+	for (int k = 0; k < P; ++k) {
+		int t = best_asg[k];
+		if (t < 0 || t >= T) {
+			// Fallback: assign to team with lowest total
+			int best_t = 0;
+			double best_tot = std::numeric_limits<double>::infinity();
+			for (int j = 0; j < T; ++j) {
+				double s = result[j].total_point();
+				if (s < best_tot) {
+					best_tot = s;
+					best_t = j;
+				}
+			}
+			t = best_t;
+		}
+		result[t].add_member(players[k]);
 	}
 
-	// Pruning
-	if (compute_lower_bound(player_idx) >= best_spread - 1e-9) {
-		return;
-	}
-
-	// Try assigning to each team
-	std::vector<int> team_order(num_teams);
-	std::iota(team_order.begin(), team_order.end(), 0);
-
-	if (!must_fill_empty_teams(player_idx)) {
-		// Sort by current total (ascending)
-		std::ranges::sort(team_order, {}, [this](int t) { return current_totals[t]; });
-	}
-	else {
-		// Must fill empty teams first
-		auto part = std::ranges::partition(team_order, [this](int t) { return current_counts[t] == 0; });
-		// Shuffle only the “true” partition (teams that are currently empty)
-		std::ranges::shuffle(std::ranges::subrange(team_order.begin(), part.begin()), rng);
-	}
-
-	for (int team : team_order) {
-		current_assignment[player_idx] = team;
-		current_totals[team] += players[player_idx].point;
-		current_counts[team]++;
-
-		dfs(player_idx + 1);
-
-		current_counts[team]--;
-		current_totals[team] -= players[player_idx].point;
-		current_assignment[player_idx] = -1;
-	}
-}
-
-auto team_service::bnb_context::compute_lower_bound(int player_idx) const -> double
-{
-	auto [min_it, max_it] = std::ranges::minmax_element(current_totals);
-	double cur_min = *min_it;
-	double cur_max = *max_it;
-
-	double remaining = suffix_sums[player_idx];
-
-	// Best case: all remaining points go to min team
-	double best_case_spread = std::max(0.0, cur_max - (cur_min + remaining));
-
-	// Consider target mean constraint
-	double mean_constraint = std::max(cur_max - target_mean, target_mean - cur_min);
-
-	return std::max(best_case_spread, mean_constraint);
-}
-
-auto team_service::bnb_context::must_fill_empty_teams(int player_idx) const -> bool
-{
-	const int empty_count = util::narrow<int>(std::ranges::count(current_counts, 0));
-	const int remaining = static_cast<int>(players.size()) - player_idx;
-	return remaining == empty_count && empty_count > 0;
-}
-
-auto team_service::bnb_context::compute_spread() const -> double
-{
-	auto [min_it, max_it] = std::ranges::minmax_element(current_totals);
-	return *max_it - *min_it;
+	return result;
 }
 
 } // namespace terry
