@@ -40,7 +40,7 @@ auto embed_builder::build_user_list(std::span<const user> users) -> dpp::embed
 	for (const auto &u : users) {
 		int win_rate = u.games > 0 ? static_cast<int>(std::round((u.wins * 100.0) / u.games)) : 0;
 
-		desc += std::format("{} **({:.3f} CP)** — 勝率 {}% ({}/{})\n", util::mention(u.id), u.point, win_rate, u.wins, u.games);
+		desc += std::format("{} **({:.0f} CP)** — 勝率 {}% ({}/{})\n", util::mention(u.id), u.point, win_rate, u.wins, u.games);
 	}
 
 	e.set_description(desc);
@@ -109,12 +109,12 @@ auto embed_builder::build_teams(std::span<const team> teams) -> dpp::embed
 
 	for (std::size_t i = 0; i < teams.size(); ++i) {
 		const auto &team = teams[i];
-		desc += std::format("**隊伍 {}** (總分 {:.3f} CP)：", i + 1, team.total_point());
+		desc += std::format("**隊伍 {}** (總分 {:.0f} CP)：", i + 1, team.total_point());
 		desc += format_team_members(team);
 		desc += "\n";
 	}
 
-	desc += std::format("\n最大分數差：{:.3f} CP", spread);
+	desc += std::format("\n最大分數差：{:.0f} CP", spread);
 
 	e.set_description(desc);
 	return e;

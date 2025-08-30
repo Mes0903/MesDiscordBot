@@ -43,7 +43,7 @@ auto panel_builder::build_formteams_panel(const panel_session &sess, std::span<c
 
 		for (std::size_t i = 0; i < sess.formed_teams.size(); ++i) {
 			const auto &team = sess.formed_teams[i];
-			body += std::format("隊伍 {}（總分數 {:.3f} CP）：", i + 1, team.total_point());
+			body += std::format("隊伍 {}（總分數 {:.0f} CP）：", i + 1, team.total_point());
 
 			bool first = true;
 			for (const auto &m : team.members) {
@@ -54,7 +54,7 @@ auto panel_builder::build_formteams_panel(const panel_session &sess, std::span<c
 			}
 			body += "\n";
 		}
-		body += std::format("最大分數差：{:.3f} CP\n", max_total - min_total);
+		body += std::format("最大分數差：{:.0f} CP\n", max_total - min_total);
 	}
 
 	e.set_description(body);
@@ -121,7 +121,7 @@ auto panel_builder::build_setwinner_panel(const panel_session &sess, std::span<c
 			const auto &team = current_match->teams[i];
 			double total = team.total_point();
 
-			body += std::format("隊伍 {}（總分 {:.3f} CP）：", i + 1, total);
+			body += std::format("隊伍 {}（總分 {:.0f} CP）：", i + 1, total);
 
 			bool first = true;
 			for (const auto &m : team.members) {
@@ -215,7 +215,7 @@ auto panel_builder::create_user_select_menu(const std::string &panel_id, std::sp
 		bool is_selected = selected_set.contains(util::id_to_u64(u.id));
 
 		std::string label = u.username.empty() ? util::mention(u.id) : u.username;
-		label += std::format(" ({:.3f} CP)", u.point);
+		label += std::format(" ({:.0f} CP)", u.point);
 
 		dpp::select_option opt(label, std::to_string(util::id_to_u64(u.id)));
 		if (is_selected) {

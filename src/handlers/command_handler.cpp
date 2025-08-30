@@ -119,7 +119,7 @@ auto command_handler::cmd_adduser(const dpp::slashcommand_t &ev) -> void
 	auto users = match_svc_->list_users(true);
 
 	// Compose the success line first
-	std::string ok = std::format("新增/更新使用者 {} 的分數為 {:.3f}", util::mention(uid), point);
+	std::string ok = std::format("新增/更新使用者 {} 的分數為 {:.0f}", util::mention(uid), point);
 
 	// If the list is empty (edge case), append the "no users" hint to content.
 	if (users.empty()) {
