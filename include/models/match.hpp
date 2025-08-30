@@ -65,8 +65,16 @@ public:
 // Utility function for formatting timestamps
 [[nodiscard]] inline auto format_timestamp(type::timestamp tp) -> std::string
 {
-	const auto zt = std::chrono::zoned_time{std::chrono::current_zone(), tp};
-	return std::format("{:%Y-%m-%d %H:%M:%S}", zt);
+	using namespace std::chrono;
+	try {
+		static const time_zone *tz = locate_zone("Asia/Taipei");
+		const zoned_time zt{tz, tp};
+		return std::format("{:%Y-%m-%d %H:%M:%S}", zt);
+	} catch (...) {
+		// Fallback: Taiwan has no DST, UTC+8 is safe
+		const auto tw = floor<seconds>(tp + hours{8});
+		return std::format("{:%Y-%m-%d %H:%M:%S} GMT+8", tw);
+	}
 }
 
 } // namespace terry
