@@ -70,16 +70,7 @@ auto interaction_handler::on_button(const dpp::button_click_t &ev) -> void
 		handle_end(ev, sess);
 	}
 	else if (parsed->action == "win") {
-		if (parsed->arg) {
-			int team_idx = 0;
-			auto [ptr, ec] = std::from_chars(parsed->arg->data(), parsed->arg->data() + parsed->arg->size(), team_idx);
-			if (ec == std::errc{}) {
-				handle_win(ev, sess, team_idx);
-			}
-		}
-		else {
-			ui::message_builder::reply_error(ev, "缺少隊伍索引");
-		}
+		handle_win(ev, sess);
 	}
 	else if (parsed->action == "remove") {
 		handle_remove(ev, sess);
@@ -171,45 +162,71 @@ auto interaction_handler::handle_newmatch(const dpp::button_click_t &ev, panel_s
 	return ev.reply(dpp::ir_update_message, msg);
 }
 
-auto interaction_handler::handle_win(const dpp::button_click_t &ev, panel_session &sess, int team_idx) -> void
+auto interaction_handler::handle_win(const dpp::button_click_t &ev, panel_session &sess) -> void
 {
+	// Parse and validate the custom_id. Expected format:
+	//   "panel:{panel_id}:win:{team_idx}"
+	// We rely on the existing parse_custom_id(...) helper which returns:
+	//   parsed_custom_id { panel_id: string, action: string, arg: optional<string> }.
+	auto parsed = parse_custom_id(ev.custom_id);
+	if (!parsed || parsed->action != "win") {
+		return ui::message_builder::reply_error(ev, "無法解析按鈕：不是有效的勝方設定按鈕");
+	}
+
+	// Ensure there is a selected match to update.
 	if (!sess.selected_match_index) {
 		return ui::message_builder::reply_error(ev, "目前沒有選定的場次可更新");
 	}
 
+	// Extract team index from the parsed arg.
+	if (!parsed->arg) {
+		return ui::message_builder::reply_error(ev, "缺少隊伍索引");
+	}
+
+	int team_idx = -1;
+	{
+		// Parse integer without allocations; arg is the substring after the last ':'.
+		auto &a = *parsed->arg;
+		auto [ptr, ec] = std::from_chars(a.data(), a.data() + a.size(), team_idx);
+		if (ec != std::errc{}) {
+			return ui::message_builder::reply_error(ev, "隊伍索引格式錯誤");
+		}
+	}
+
+	// Validate team index against the currently loaded teams in session.
+	// Code populates `sess.formed_teams` when a match is chosen, and also stores `sess.num_teams` accordingly.
 	if (team_idx < 0 || team_idx >= static_cast<int>(sess.formed_teams.size())) {
 		return ui::message_builder::reply_error(ev, "無效的隊伍索引");
 	}
 
-	// Set winner
-	if (auto res = match_svc_->set_match_winner(*sess.selected_match_index, {team_idx}); !res) {
+	// Persist winner to the selected match.
+	if (auto res = match_svc_->set_match_winner(*sess.selected_match_index, std::vector<int>{team_idx}); !res) {
 		return ui::message_builder::reply_error(ev, res.error().what());
 	}
 
-	// Recompute ratings
-	if (auto res = match_svc_->recompute_ratings(); !res) {
-		return ui::message_builder::reply_error(ev, res.error().what());
+	// Recompute ratings for all users after the match outcome is updated.
+	if (auto recompute = match_svc_->recompute_ratings(); !recompute) {
+		return ui::message_builder::reply_error(ev, recompute.error().what());
 	}
 
-	// Save
-	if (auto res = match_svc_->save(); !res) {
-		return ui::message_builder::reply_error(ev, res.error().what());
+	// Save to storage.
+	if (auto saved = match_svc_->save(); !saved) {
+		return ui::message_builder::reply_error(ev, saved.error().what());
 	}
 
-	// Refresh the snapshot used by the panel
-	if (auto updated = match_svc_->match_by_index(*sess.selected_match_index)) {
-		sess.formed_teams = updated->teams;
-		sess.num_teams = static_cast<int>(updated->teams.size());
-	}
-
-	// Update panel
-	auto matches = match_svc_->recent_matches(8);
+	// Rebuild the history panel (recent 8), keeping the same "index mapping" convention:
+	// use (history_size - i - 1) to map displayed order back to absolute history index.
+	constexpr int kMaxRecent = 8;
+	auto matches = match_svc_->recent_matches(kMaxRecent);
 	std::vector<std::pair<std::size_t, match_record>> indexed_matches;
-	auto history_size = matches.size();
+	indexed_matches.reserve(matches.size());
+
+	const auto history_size = matches.size();
 	for (std::size_t i = 0; i < matches.size(); ++i) {
 		indexed_matches.emplace_back(history_size - i - 1, matches[i]);
 	}
 
+	// Re-render the panel message.
 	auto msg = panel_bld_->build_sethistory_panel(sess, indexed_matches);
 	msg.set_content(std::format("📝 已更新勝方為：隊伍 {}；已重算隱分與戰績並存檔", team_idx + 1));
 	return ev.reply(dpp::ir_update_message, msg);

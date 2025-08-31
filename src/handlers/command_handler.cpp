@@ -105,7 +105,7 @@ auto command_handler::cmd_adduser(const dpp::slashcommand_t &ev) -> void
 		}
 	}
 
-	// Store it (your existing error handling).
+	// Store it.
 	if (auto res = match_svc_->upsert_user(uid, display, point); !res) {
 		return ui::message_builder::reply_error(ev, res.error().what());
 	}
@@ -150,7 +150,7 @@ auto command_handler::cmd_removeuser(const dpp::slashcommand_t &ev) -> void
 	{
 		auto users = match_svc_->list_users(true);
 
-		// Success line (use your preferred wording/emoji)
+		// Success line
 		std::string ok = std::format("🗑️ 移除使用者 {}", util::mention(uid));
 
 		if (users.empty()) {
