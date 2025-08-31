@@ -212,7 +212,6 @@ auto match_service::apply_match_effect(std::span<const team> teams, std::span<co
 	// Prepare team sums/ratings
 	constexpr double ELO_SCALE = 400.0;
 	constexpr double kMinPower = 0.0;
-	constexpr double k_factor = 4.0;
 
 	const std::size_t N = teams.size();
 	std::vector<double> team_sum(N, 0.0);
@@ -237,14 +236,38 @@ auto match_service::apply_match_effect(std::span<const team> teams, std::span<co
 		return 1.0 / (1.0 + exp_term);
 	};
 
-	// Pairwise deltas
+	// ---- Pairwise deltas (K scales with team sizes) ----
+	// Goal: when two teams of equal skill (E≈0.5) play a match, the WINNING team
+	//       gains ≈ K_BASE per player on average, regardless of team size.
+	//       For multi-team matches (>2 teams), normalize by (N-1) to avoid inflation.
+	constexpr double K_BASE = 20.0; // target per-player step (tune: 10–30)
+	const double opponent_norm = (N > 1) ? 1.0 / static_cast<double>(N - 1) : 1.0;
+
 	for (std::size_t i = 0; i < N; ++i) {
+		const double Ni = static_cast<double>(teams[i].members.size());
 		for (std::size_t j = i + 1; j < N; ++j) {
+			const double Nj = static_cast<double>(teams[j].members.size());
+			if (Ni <= 0.0 || Nj <= 0.0) {
+				// Skip empty teams to avoid divide-by-zero or unintended scaling.
+				continue;
+			}
+
+			// Use the SAME Kij for both sides to keep the pair zero-sum.
+			// Choice: scale Kij with the average team size and normalize by (N-1).
+			// When Ni==Nj and N==2, team gain at E=0.5 is 0.5*Kij ≈ K_BASE * Ni,
+			// which averages to ≈ K_BASE per player.
+			const double k_factor = K_BASE * (Ni + Nj) * opponent_norm;
+
+			// (Alternative, more conservative under size mismatch)
+			// const double Kij = K_BASE * (2.0 * std::min(Ni, Nj)) * opponent_norm;
+
 			const double Ei = expected_vs(team_rating[i], team_rating[j]);
 			const double Ej = 1.0 - Ei;
+
 			const bool i_win = winset.contains(static_cast<int>(i));
 			const bool j_win = winset.contains(static_cast<int>(j));
-			double Si = 0.5, Sj = 0.5;
+
+			double Si = 0.5, Sj = 0.5; // treat non-decided pairs as draw
 			if (i_win && !j_win) {
 				Si = 1.0;
 				Sj = 0.0;
@@ -253,8 +276,10 @@ auto match_service::apply_match_effect(std::span<const team> teams, std::span<co
 				Si = 0.0;
 				Sj = 1.0;
 			}
+
 			const double di = k_factor * (Si - Ei);
-			const double dj = k_factor * (Sj - Ej);
+			const double dj = k_factor * (Sj - Ej); // symmetric => di + dj == 0 (zero-sum)
+
 			team_delta[i] += di;
 			team_delta[j] += dj;
 		}
@@ -262,7 +287,7 @@ auto match_service::apply_match_effect(std::span<const team> teams, std::span<co
 
 	// Distribute team deltas to members
 	constexpr double kWeightFloor = 1e-6;
-	constexpr double alpha = 0.6;
+	constexpr double alpha = 1;
 
 	for (std::size_t ti = 0; ti < N; ++ti) {
 		const double Ts = team_sum[ti];
