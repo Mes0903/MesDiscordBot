@@ -164,6 +164,10 @@ auto match_service::recompute_ratings() -> std::expected<std::monostate, type::e
 	// Apply each match
 	for (std::size_t idx : order) {
 		const auto &mr = history_[idx];
+		// Skip matches that have no winners recorded (do not affect ratings/counters)
+		if (mr.winning_teams.empty()) { // should not get in here, this situation should be skipped in 'apply_match_effect'
+			continue;
+		}
 		if (auto res = apply_match_effect(mr.teams, mr.winning_teams); !res) {
 			return res;
 		}
@@ -190,6 +194,13 @@ auto match_service::apply_match_effect(std::span<const team> teams, std::span<co
 	// --- Validate inputs first ---
 	if (teams.empty()) {
 		return std::unexpected(type::error{constants::text::teams_must_positive});
+	}
+
+	// Ignore matches without recorded outcomes entirely:
+	// - no rating change
+	// - no wins/games counters
+	if (winners.empty()) {
+		return std::monostate{};
 	}
 
 	for (int w : winners) {
