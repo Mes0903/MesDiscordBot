@@ -81,6 +81,9 @@ auto interaction_handler::on_button(const dpp::button_click_t &ev) -> void
 			ui::message_builder::reply_error(ev, "缺少隊伍索引");
 		}
 	}
+	else if (parsed->action == "remove") {
+		handle_remove(ev, sess);
+	}
 	else {
 		ui::message_builder::reply_error(ev, "未知的按鈕操作");
 	}
@@ -164,7 +167,7 @@ auto interaction_handler::handle_newmatch(const dpp::button_click_t &ev, panel_s
 
 	auto users = match_svc_->list_users();
 	auto msg = panel_bld_->build_formteams_panel(sess, users);
-	msg.set_content("🆕 已新增一場比賽到對戰紀錄（待 `/setwinner` 設定勝負）");
+	msg.set_content("🆕 已新增一場比賽到對戰紀錄（待 `/sethistory` 設定勝負）");
 	return ev.reply(dpp::ir_update_message, msg);
 }
 
@@ -207,8 +210,42 @@ auto interaction_handler::handle_win(const dpp::button_click_t &ev, panel_sessio
 		indexed_matches.emplace_back(history_size - i - 1, matches[i]);
 	}
 
-	auto msg = panel_bld_->build_setwinner_panel(sess, indexed_matches);
+	auto msg = panel_bld_->build_sethistory_panel(sess, indexed_matches);
 	msg.set_content(std::format("📝 已更新勝方為：隊伍 {}；已重算隱分與戰績並存檔", team_idx + 1));
+	return ev.reply(dpp::ir_update_message, msg);
+}
+
+auto interaction_handler::handle_remove(const dpp::button_click_t &ev, panel_session &sess) -> void
+{
+	if (!sess.selected_match_index) {
+		return ui::message_builder::reply_error(ev, "目前沒有選定的場次可移除");
+	}
+
+	// remove the game
+	if (auto res = match_svc_->delete_match(*sess.selected_match_index); !res) {
+		return ui::message_builder::reply_error(ev, res.error().what());
+	}
+	// recalulate & save the point
+	if (auto res = match_svc_->recompute_ratings(); !res) {
+		return ui::message_builder::reply_error(ev, res.error().what());
+	}
+	if (auto res = match_svc_->save(); !res) {
+		return ui::message_builder::reply_error(ev, res.error().what());
+	}
+
+	// reset the select menu
+	sess.selected_match_index.reset();
+
+	const int kMaxRecent = 8;
+	auto matches = match_svc_->recent_matches(kMaxRecent);
+	std::vector<std::pair<std::size_t, match_record>> indexed_matches;
+	auto history_size = matches.size();
+	for (std::size_t i = 0; i < matches.size(); ++i) {
+		indexed_matches.emplace_back(history_size - i - 1, matches[i]);
+	}
+
+	auto msg = panel_bld_->build_sethistory_panel(sess, indexed_matches);
+	msg.set_content("🗑️ 已移除該筆對戰紀錄；已重算隱分並存檔");
 	return ev.reply(dpp::ir_update_message, msg);
 }
 
@@ -270,7 +307,7 @@ auto interaction_handler::handle_match_choose(const dpp::select_click_t &ev, pan
 		indexed_matches.emplace_back(history_size - i - 1, matches[i]);
 	}
 
-	auto msg = panel_bld_->build_setwinner_panel(sess, indexed_matches);
+	auto msg = panel_bld_->build_sethistory_panel(sess, indexed_matches);
 	return ev.reply(dpp::ir_update_message, msg);
 }
 

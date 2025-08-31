@@ -118,6 +118,16 @@ auto match_service::set_match_winner(std::size_t index, std::vector<int> winning
 	return std::monostate{};
 }
 
+auto match_service::delete_match(std::size_t index) -> std::expected<std::monostate, type::error>
+{
+	if (index >= history_.size()) {
+		return std::unexpected(type::error{"Match index out of range"});
+	}
+
+	history_.erase(history_.begin() + static_cast<long>(index));
+	return std::monostate{};
+}
+
 auto match_service::recent_matches(int count) const -> std::vector<match_record>
 {
 	if (count <= 0 || history_.empty())

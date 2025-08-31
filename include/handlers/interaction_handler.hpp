@@ -39,6 +39,7 @@ private:
 	auto handle_assign(const dpp::button_click_t &ev, panel_session &sess) -> void;
 	auto handle_newmatch(const dpp::button_click_t &ev, panel_session &sess) -> void;
 	auto handle_win(const dpp::button_click_t &ev, panel_session &sess, int team_idx) -> void;
+	auto handle_remove(const dpp::button_click_t &ev, panel_session &sess) -> void;
 	auto handle_end(const dpp::button_click_t &ev, panel_session &sess) -> void;
 
 	// Select action handlers

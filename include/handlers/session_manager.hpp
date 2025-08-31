@@ -10,7 +10,7 @@
 
 namespace terry {
 
-enum class panel_type { formteams, setwinner };
+enum class panel_type { formteams, sethistory };
 
 struct panel_session {
 	std::string panel_id{};

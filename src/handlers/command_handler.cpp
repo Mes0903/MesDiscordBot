@@ -29,8 +29,8 @@ auto command_handler::on_slash(const dpp::slashcommand_t &ev) -> void
 		return cmd_formteams(ev);
 	if (name == "history")
 		return cmd_history(ev);
-	if (name == "setwinner")
-		return cmd_setwinner(ev);
+	if (name == "sethistory")
+		return cmd_sethistory(ev);
 
 	return ui::message_builder::reply_error(ev, constants::text::unknown_command);
 }
@@ -53,7 +53,7 @@ auto command_handler::commands(dpp::snowflake bot_id) -> std::vector<dpp::slashc
 
 	cmds.emplace_back("history", "顯示近期對戰紀錄", bot_id).add_option(dpp::command_option(dpp::co_integer, "count", "要顯示幾筆（預設 5）", false));
 
-	cmds.emplace_back("setwinner", "開啟/切換最近 8 場的勝負記錄面板", bot_id);
+	cmds.emplace_back("sethistory", "開啟/切換最近 8 場的歷史編輯面板", bot_id);
 
 	return cmds;
 }
@@ -232,7 +232,7 @@ auto command_handler::cmd_history(const dpp::slashcommand_t &ev) -> void
 	return ev.reply(dpp::message().add_embed(embed));
 }
 
-auto command_handler::cmd_setwinner(const dpp::slashcommand_t &ev) -> void
+auto command_handler::cmd_sethistory(const dpp::slashcommand_t &ev) -> void
 {
 	constexpr int kMaxRecent = 8;
 	auto matches = match_svc_->recent_matches(kMaxRecent);
@@ -251,7 +251,7 @@ auto command_handler::cmd_setwinner(const dpp::slashcommand_t &ev) -> void
 	panel_session sess{.guild_id = ev.command.guild_id,
 										 .channel_id = ev.command.channel_id,
 										 .owner_id = ev.command.usr.id,
-										 .type = panel_type::setwinner,
+										 .type = panel_type::sethistory,
 										 .num_teams = static_cast<int>(matches[0].teams.size()),
 										 .formed_teams = matches[0].teams,
 										 .selected_match_index = history_size - 1};
@@ -263,8 +263,8 @@ auto command_handler::cmd_setwinner(const dpp::slashcommand_t &ev) -> void
 		return ui::message_builder::reply_error(ev, "無法建立 session");
 	}
 
-	auto msg = panel_bld_->build_setwinner_panel(session->get(), indexed_matches);
-	msg.set_content("🏅 勝負記錄面板（可從下拉清單切換最近 8 場）");
+	auto msg = panel_bld_->build_sethistory_panel(session->get(), indexed_matches);
+	msg.set_content("🏅 歷史編輯面板（可從下拉清單切換最近 8 場）");
 	return ev.reply(msg);
 }
 

@@ -90,11 +90,12 @@ auto panel_builder::build_formteams_panel(const panel_session &sess, std::span<c
 	return msg;
 }
 
-auto panel_builder::build_setwinner_panel(const panel_session &sess, std::span<const std::pair<std::size_t, match_record>> recent_matches) const -> dpp::message
+auto panel_builder::build_sethistory_panel(const panel_session &sess, std::span<const std::pair<std::size_t, match_record>> recent_matches) const
+		-> dpp::message
 {
 	dpp::message msg;
 	dpp::embed e;
-	e.set_title("勝負記錄面板");
+	e.set_title("歷史編輯面板");
 
 	std::string body;
 
@@ -188,6 +189,8 @@ auto panel_builder::build_setwinner_panel(const panel_session &sess, std::span<c
 
 	// Add end button
 	dpp::component end_row;
+	end_row.add_component(
+			dpp::component().set_type(dpp::cot_button).set_style(dpp::cos_danger).set_label("移除此筆紀錄").set_id(std::format("panel:{}:remove", sess.panel_id)));
 	end_row.add_component(
 			dpp::component().set_type(dpp::cot_button).set_style(dpp::cos_danger).set_label("結束").set_id(std::format("panel:{}:end", sess.panel_id)));
 	msg.add_component(end_row);

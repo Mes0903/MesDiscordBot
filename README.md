@@ -141,6 +141,6 @@ The container will compile the project and start the bot. Logs stream in your te
 | `/listusers`  | —                                  | List all registered users.                                                                     |
 | `/formteams`  | `teams` (int, default 2)           | Open the team-formation panel. Select participants and press Assign to generate teams.         |
 | `/history`    | `count` (int, default 5)           | Show recent matches, including winners and team compositions.                                  |
-| `/setwinner`  | —                                  | Open the winner-setting panel for the most recent matches (select a match, then mark winners). |
+| `/sethistory`  | —                                  | Open the winner-setting panel for the most recent matches (select a match, then mark winners). |
 | `/help`       | —                                  | Show an embedded help panel summarizing all commands.                                          |
 

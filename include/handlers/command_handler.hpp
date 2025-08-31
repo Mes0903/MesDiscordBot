@@ -35,7 +35,7 @@ private:
 	auto cmd_listusers(const dpp::slashcommand_t &ev) -> void;
 	auto cmd_formteams(const dpp::slashcommand_t &ev) -> void;
 	auto cmd_history(const dpp::slashcommand_t &ev) -> void;
-	auto cmd_setwinner(const dpp::slashcommand_t &ev) -> void;
+	auto cmd_sethistory(const dpp::slashcommand_t &ev) -> void;
 };
 
 } // namespace terry
