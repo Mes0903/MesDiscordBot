@@ -15,7 +15,7 @@ public:
 	[[nodiscard]] auto build_formteams_panel(const panel_session &sess, std::span<const user> all_users) const -> dpp::message;
 
 	// Build winner selection panel
-	[[nodiscard]] auto build_setwinner_panel(const panel_session &sess, std::span<const std::pair<std::size_t, match_record>> recent_matches) const
+	[[nodiscard]] auto build_sethistory_panel(const panel_session &sess, std::span<const std::pair<std::size_t, match_record>> recent_matches) const
 			-> dpp::message;
 
 private:

@@ -69,8 +69,6 @@ if(NOT EXISTS "${TERRY_DATA_DIR}/matches.json")
   file(WRITE "${TERRY_DATA_DIR}/matches.json" "[]")
 endif()
 
-# If you still want a copy of the token near the binary for legacy workflows, keep this;
-# otherwise you can remove it. It’s safe to leave it (no effect on Docker).
 if(EXISTS "${TERRY_DATA_DIR}/.bot_token")
   configure_file("${TERRY_DATA_DIR}/.bot_token"
                  "${CMAKE_BINARY_DIR}/bin/.bot_token" COPYONLY)

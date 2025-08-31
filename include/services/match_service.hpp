@@ -26,6 +26,7 @@ public:
 															 type::timestamp when = std::chrono::time_point_cast<type::timestamp::duration>(std::chrono::system_clock::now()))
 			-> std::expected<std::size_t, type::error>;
 	[[nodiscard]] auto set_match_winner(std::size_t index, std::vector<int> winning_teams) -> std::expected<std::monostate, type::error>;
+	[[nodiscard]] auto delete_match(std::size_t index) -> std::expected<std::monostate, type::error>;
 	[[nodiscard]] auto recent_matches(int count) const -> std::vector<match_record>;
 	[[nodiscard]] auto match_by_index(std::size_t index) const -> std::optional<match_record>;
 
