@@ -235,30 +235,22 @@ auto command_handler::cmd_history(const dpp::slashcommand_t &ev) -> void
 auto command_handler::cmd_sethistory(const dpp::slashcommand_t &ev) -> void
 {
 	constexpr int kMaxRecent = 8;
-	auto matches = match_svc_->recent_matches(kMaxRecent);
-
-	if (matches.empty()) {
+	auto indexed_matches = match_svc_->recent_indexed_matches(kMaxRecent);
+	if (indexed_matches.empty()) {
 		return ui::message_builder::reply_error(ev, "目前沒有任何對戰紀錄（請先在分隊面板中分配後按「新增場次」）");
 	}
 
-	// Convert to indexed pairs
-	std::vector<std::pair<std::size_t, match_record>> indexed_matches;
-	auto history_size = matches.size();
-	for (std::size_t i = 0; i < matches.size(); ++i) {
-		indexed_matches.emplace_back(history_size - i - 1, matches[i]);
-	}
-
-	panel_session sess{.guild_id = ev.command.guild_id,
-										 .channel_id = ev.command.channel_id,
-										 .owner_id = ev.command.usr.id,
-										 .type = panel_type::sethistory,
-										 .num_teams = static_cast<int>(matches[0].teams.size()),
-										 .formed_teams = matches[0].teams,
-										 .selected_match_index = history_size - 1};
+	panel_session sess{};
+	sess.guild_id = ev.command.guild_id;
+	sess.channel_id = ev.command.channel_id;
+	sess.owner_id = ev.command.usr.id;
+	sess.type = panel_type::sethistory;
+	sess.num_teams = static_cast<int>(indexed_matches.front().second.teams.size());
+	sess.formed_teams = indexed_matches.front().second.teams;
+	sess.selected_match_index = indexed_matches.front().first; // global index
 
 	auto panel_id = session_mgr_->create_session(std::move(sess));
 	auto session = session_mgr_->get_session(panel_id);
-
 	if (!session) {
 		return ui::message_builder::reply_error(ev, "無法建立 session");
 	}

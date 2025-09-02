@@ -214,17 +214,9 @@ auto interaction_handler::handle_win(const dpp::button_click_t &ev, panel_sessio
 		return ui::message_builder::reply_error(ev, saved.error().what());
 	}
 
-	// Rebuild the history panel (recent 8), keeping the same "index mapping" convention:
-	// use (history_size - i - 1) to map displayed order back to absolute history index.
+	// Rebuild the history panel with global indices
 	constexpr int kMaxRecent = 8;
-	auto matches = match_svc_->recent_matches(kMaxRecent);
-	std::vector<std::pair<std::size_t, match_record>> indexed_matches;
-	indexed_matches.reserve(matches.size());
-
-	const auto history_size = matches.size();
-	for (std::size_t i = 0; i < matches.size(); ++i) {
-		indexed_matches.emplace_back(history_size - i - 1, matches[i]);
-	}
+	auto indexed_matches = match_svc_->recent_indexed_matches(kMaxRecent);
 
 	// Re-render the panel message.
 	auto msg = panel_bld_->build_sethistory_panel(sess, indexed_matches);
@@ -254,12 +246,7 @@ auto interaction_handler::handle_remove(const dpp::button_click_t &ev, panel_ses
 	sess.selected_match_index.reset();
 
 	const int kMaxRecent = 8;
-	auto matches = match_svc_->recent_matches(kMaxRecent);
-	std::vector<std::pair<std::size_t, match_record>> indexed_matches;
-	auto history_size = matches.size();
-	for (std::size_t i = 0; i < matches.size(); ++i) {
-		indexed_matches.emplace_back(history_size - i - 1, matches[i]);
-	}
+	auto indexed_matches = match_svc_->recent_indexed_matches(kMaxRecent);
 
 	auto msg = panel_bld_->build_sethistory_panel(sess, indexed_matches);
 	msg.set_content("🗑️ 已移除該筆對戰紀錄；已重算隱分並存檔");
@@ -317,12 +304,8 @@ auto interaction_handler::handle_match_choose(const dpp::select_click_t &ev, pan
 	sess.formed_teams = match->teams;
 	sess.num_teams = static_cast<int>(match->teams.size());
 
-	auto matches = match_svc_->recent_matches(8);
-	std::vector<std::pair<std::size_t, match_record>> indexed_matches;
-	auto history_size = matches.size();
-	for (std::size_t i = 0; i < matches.size(); ++i) {
-		indexed_matches.emplace_back(history_size - i - 1, matches[i]);
-	}
+	constexpr int kMaxRecent = 8;
+	auto indexed_matches = match_svc_->recent_indexed_matches(kMaxRecent);
 
 	auto msg = panel_bld_->build_sethistory_panel(sess, indexed_matches);
 	return ev.reply(dpp::ir_update_message, msg);

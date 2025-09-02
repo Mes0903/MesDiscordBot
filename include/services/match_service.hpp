@@ -28,6 +28,7 @@ public:
 	[[nodiscard]] auto set_match_winner(std::size_t index, std::vector<int> winning_teams) -> std::expected<std::monostate, type::error>;
 	[[nodiscard]] auto delete_match(std::size_t index) -> std::expected<std::monostate, type::error>;
 	[[nodiscard]] auto recent_matches(int count) const -> std::vector<match_record>;
+	[[nodiscard]] auto recent_indexed_matches(int count) const -> std::vector<std::pair<std::size_t, match_record>>;
 	[[nodiscard]] auto match_by_index(std::size_t index) const -> std::optional<match_record>;
 
 	// Persistence

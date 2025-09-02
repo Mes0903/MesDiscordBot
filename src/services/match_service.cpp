@@ -139,6 +139,24 @@ auto match_service::recent_matches(int count) const -> std::vector<match_record>
 	return std::ranges::to<std::vector<match_record>>(view);
 }
 
+auto match_service::recent_indexed_matches(int count) const -> std::vector<std::pair<std::size_t, match_record>>
+{
+	std::vector<std::pair<std::size_t, match_record>> out;
+	if (count <= 0 || history_.empty())
+		return out;
+
+	const std::size_t total = history_.size();
+	const std::size_t take = std::min<std::size_t>(static_cast<std::size_t>(count), total);
+	out.reserve(take);
+
+	// Each pair carries (global_index, hydrated_match).
+	for (std::size_t i = 0; i < take; ++i) {
+		const std::size_t idx = total - 1 - i; // global index into `history_`
+		out.emplace_back(idx, hydrate_match(history_[idx]));
+	}
+	return out;
+}
+
 auto match_service::match_by_index(std::size_t index) const -> std::optional<match_record>
 {
 	if (index >= history_.size()) {
